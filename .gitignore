@@ -1,0 +1,16 @@
+node_modules/
+*.local
+.DS_Store
+
+# Build output. `npm run build` regenerates it, and a committed copy goes stale
+# the moment anyone edits src/ — which is worse than not having one.
+dist/
+
+# Packed extensions. `npm run pack` makes these; they belong on a GitHub release,
+# not in history, where every rebuild would add another ~150KB blob for good.
+*.zip
+
+# Machine-local Claude Code permissions: absolute paths from one developer's disk,
+# meaningless to anyone else. .claude/launch.json *is* shared — it is how the
+# preview harness starts.
+.claude/settings.local.json

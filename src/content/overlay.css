@@ -1,0 +1,142 @@
+@import 'tailwindcss';
+
+/*
+ * This stylesheet never touches the host page: it is imported as a string and
+ * adopted by our Shadow DOM (PRD §2). `all: initial` on the host stops the
+ * page's cascade at our boundary, so a site with `* { box-sizing: content-box }`
+ * or an aggressive reset cannot deform our chrome.
+ */
+:host {
+  all: initial;
+  position: fixed;
+  inset: 0;
+  z-index: 2147483647;
+  pointer-events: none;
+  font-family:
+    ui-sans-serif, -apple-system, 'SF Pro Text', 'Inter', system-ui, sans-serif;
+  font-variant-numeric: tabular-nums;
+  -webkit-font-smoothing: antialiased;
+  color-scheme: light dark;
+
+  /*
+   * Tailwind's border utilities set `border-style: var(--tw-border-style)` and
+   * rely on an `@property` rule to give that variable its `solid` initial value.
+   * That registration does not survive a *constructed* stylesheet — which is how
+   * this file is adopted (see index.tsx) — so the variable resolves to nothing,
+   * the style computes to `none`, and a width with no style is a used width of
+   * zero. Every `border`, `border-t` and `border-b` in our chrome was drawing
+   * absolutely nothing until this line existed.
+   *
+   * Declared here because custom properties inherit through the shadow tree, so
+   * one declaration on the host covers everything inside it.
+   */
+  --tw-border-style: solid;
+}
+
+@theme {
+  /* PRD §4 — boutique minimalism: near-monochrome chrome, two functional hues. */
+  --color-ink: #0b0b0c;
+  --color-ink-soft: #6b6b70;
+  --color-paper: #ffffff;
+  --color-line: rgba(11, 11, 12, 0.08);
+  --color-select: #0a84ff;
+  --color-pad: #7ac943;
+  --color-mar: #f6853f;
+  /* The only red in the product: something is wrong, not merely different. */
+  --color-fail: #e5484d;
+
+  /* The logo's own navy, sampled from it. */
+  --color-navy: #01102e;
+  /*
+   * Links, in the same hue lifted to a lightness that still reads as *blue* at
+   * 10px. The logo navy itself is only 9% light — against the grey it sits in it
+   * would look black, and a link nobody recognises as one is the problem the
+   * colour is meant to solve. 7.4:1 on paper, so it clears AA comfortably.
+   */
+  --color-link: #18448b;
+
+  --shadow-panel: 0 1px 2px rgba(11, 11, 12, 0.08), 0 8px 24px -6px rgba(11, 11, 12, 0.18);
+  --shadow-handle: 0 1px 3px rgba(11, 11, 12, 0.35);
+  --radius-pill: 999px;
+}
+
+
+/* Every interactive layer opts back in; the root stays click-through. */
+.dm-interactive {
+  pointer-events: auto;
+}
+
+/* Nothing OS influence: dotted matrix used sparingly as a texture cue. */
+.dm-dotted {
+  background-image: radial-gradient(currentColor 1px, transparent 1px);
+  background-size: 4px 4px;
+  opacity: 0.5;
+}
+
+/*
+ * Scrollbar that dissolves when you stop. Present while scrolling or hovering,
+ * gone otherwise — a permanent track inside a 248px panel reads as clutter.
+ */
+.dm-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+  transition: scrollbar-color 0.35s ease;
+}
+
+.dm-scroll:hover,
+.dm-scroll.is-scrolling {
+  scrollbar-color: rgba(11, 11, 12, 0.28) transparent;
+}
+
+.dm-scroll::-webkit-scrollbar {
+  width: 9px;
+}
+
+.dm-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.dm-scroll::-webkit-scrollbar-thumb {
+  border: 3px solid transparent;
+  background-clip: content-box;
+  background-color: transparent;
+  border-radius: 999px;
+  transition: background-color 0.35s ease;
+}
+
+.dm-scroll:hover::-webkit-scrollbar-thumb,
+.dm-scroll.is-scrolling::-webkit-scrollbar-thumb {
+  background-color: rgba(11, 11, 12, 0.28);
+}
+
+/* Section break inside a floating bar — visible, without becoming furniture. */
+.dm-divider {
+  flex: none;
+  align-self: center;
+  width: 1px;
+  height: 20px;
+  margin: 0 5px;
+  background: rgba(11, 11, 12, 0.16);
+}
+
+/* Text fields say when they have the keyboard: without it, typing into a hex
+   box or the font search gives no sign the keystrokes are landing there. */
+.dm-field {
+  outline: none;
+  transition:
+    border-color 0.12s ease,
+    box-shadow 0.12s ease;
+}
+
+.dm-field:focus,
+.dm-field:focus-visible {
+  border-color: var(--color-select) !important;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-select) 28%, transparent);
+}
+
+.dm-panel {
+  background: var(--color-paper);
+  border: 1px solid var(--color-line);
+  border-radius: 12px;
+  box-shadow: var(--shadow-panel);
+}

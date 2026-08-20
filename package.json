@@ -1,0 +1,34 @@
+{
+  "name": "dominator",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Figma-style direct manipulation of the live browser DOM.",
+  "type": "module",
+  "scripts": {
+    "dev": "npm run build -- --watch",
+    "build": "npm run clean && npm run build:ui && npm run build:content && npm run build:static",
+    "build:ui": "vite build",
+    "build:content": "vite build --config vite.content.config.ts",
+    "build:static": "node scripts/copy-static.mjs",
+    "pack": "npm run build && node scripts/pack.mjs",
+    "clean": "node scripts/clean.mjs",
+    "serve": "node scripts/serve.mjs",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "bootstrap-icons": "^1.13.1",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.1.0",
+    "@types/chrome": "^0.0.287",
+    "@types/node": "^26.2.0",
+    "@types/react": "^19.1.0",
+    "@types/react-dom": "^19.1.0",
+    "@vitejs/plugin-react": "^5.0.0",
+    "tailwindcss": "^4.1.0",
+    "typescript": "^5.7.0",
+    "vite": "^7.0.0"
+  }
+}

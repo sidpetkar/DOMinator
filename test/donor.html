@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>DOMinator donor page</title>
+    <!--
+      The other half of the cross-tab clipboard harness. Everything here is
+      styled by *class*, and deliberately clashes with what test/fixture.html
+      does to the same class names: `.card` is a dark gradient tile here and a
+      pale bordered box there, `.badge` is a pink pill here and undefined there.
+
+      So a copy that arrives in the fixture looking like this proves the cascade
+      travelled; a copy that arrives looking like a fixture card proves it didn't.
+    -->
+    <style>
+      body {
+        margin: 0;
+        padding: 40px;
+        background: #12121a;
+        color: #e8e8f0;
+        font: 14px/1.55 'Iowan Old Style', Georgia, serif;
+      }
+      h1 { font-size: 20px; font-weight: 600; letter-spacing: -0.01em; }
+      .deck { display: flex; gap: 20px; align-items: stretch; }
+      .card {
+        flex: 1;
+        padding: 22px 20px 26px;
+        border: 1px solid rgba(232, 232, 240, 0.16);
+        border-radius: 18px;
+        background: linear-gradient(160deg, #2a2a3d 0%, #1b1b28 100%);
+        box-shadow: 0 18px 40px -18px rgba(0, 0, 0, 0.9);
+      }
+      .card h3 {
+        margin: 0 0 10px;
+        font-size: 17px;
+        font-weight: 600;
+        letter-spacing: 0.01em;
+        color: #ffd479;
+      }
+      .card p { margin: 0 0 14px; color: #a8a8bd; font-size: 13px; }
+      .badge {
+        display: inline-block;
+        padding: 3px 11px;
+        border-radius: 999px;
+        background: #e83e9c;
+        color: #fff;
+        font: 600 11px/1.6 ui-sans-serif, system-ui, sans-serif;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+      }
+      .swatch { display: flex; gap: 8px; margin-top: 16px; }
+      .swatch i { width: 22px; height: 22px; border-radius: 7px; }
+      .swatch i:nth-child(1) { background: #7ac943; }
+      .swatch i:nth-child(2) { background: #f6853f; }
+      .swatch i:nth-child(3) { background: #0a84ff; }
+      .mark { width: 28px; height: 28px; margin-bottom: 12px; }
+    </style>
+  </head>
+  <body>
+    <h1>Donor page</h1>
+    <p>Copy a card from here, then paste it into the fixture in the other tab.</p>
+
+    <div class="deck">
+      <div class="card">
+        <svg class="mark" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <circle cx="12" cy="12" r="10" stroke="#ffd479" stroke-width="2" />
+          <path d="M7 12.5l3.2 3.2L17 9" stroke="#7ac943" stroke-width="2.4" />
+        </svg>
+        <h3>Donor card</h3>
+        <p>Dark gradient, gold heading, serif body — none of which the fixture page defines.</p>
+        <span class="badge">Travelled</span>
+        <div class="swatch"><i></i><i></i><i></i></div>
+      </div>
+      <div class="card">
+        <h3>Second card</h3>
+        <p>Here to prove a multi-selection copy keeps its order across the tab boundary.</p>
+        <span class="badge">Also</span>
+      </div>
+    </div>
+
+    <script>
+      const c = (window.chrome ??= {})
+      c.runtime ??= { onMessage: { addListener() {} } }
+      c.runtime.onMessage ??= { addListener() {} }
+      c.runtime.sendMessage ??= () => Promise.resolve({ ok: false, error: 'unhandled' })
+      c.storage ??= { sync: { get: () => Promise.resolve({}) } }
+
+      /* Same localStorage-backed stand-in as the fixture — see the note there. */
+      const SHELF = 'dominator:harness-shelf'
+      const shelfListeners = new Set()
+      c.storage.session ??= {
+        get: (key) => {
+          const raw = localStorage.getItem(SHELF)
+          return Promise.resolve(raw ? { [key]: JSON.parse(raw) } : {})
+        },
+        set: (entries) => {
+          const [value] = Object.values(entries)
+          localStorage.setItem(SHELF, JSON.stringify(value))
+          return Promise.resolve()
+        },
+      }
+      c.storage.onChanged ??= {
+        addListener: (fn) => shelfListeners.add(fn),
+        removeListener: (fn) => shelfListeners.delete(fn),
+      }
+      addEventListener('storage', (event) => {
+        if (event.key !== SHELF || !event.newValue) return
+        const change = { 'dominator:handoff': { newValue: JSON.parse(event.newValue) } }
+        for (const fn of shelfListeners) fn(change, 'session')
+      })
+    </script>
+    <script src="../dist/content.js"></script>
+    <script>
+      window.__dominator?.controller.activate()
+    </script>
+  </body>
+</html>

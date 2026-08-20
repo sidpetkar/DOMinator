@@ -1,0 +1,320 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>DOMinator fixture</title>
+    <style>
+      /* Deliberately opinionated + high-specificity, to prove our writes win. */
+      * { box-sizing: border-box; }
+      body { margin: 0; font-family: system-ui, sans-serif; color: #111; }
+      body div.page { max-width: 880px; margin: 0 auto; padding: 48px 24px; }
+      .row { display: flex; gap: 16px; margin: 24px 0; }
+      body .card { flex: 1; padding: 20px; border: 1px solid #e4e4e7; border-radius: 12px; background: #fafafa; }
+      body .card h3 { margin: 0 0 8px; font-size: 15px !important; }
+      body .card p { margin: 0; font-size: 13px; color: #6b6b70; }
+      .stack { display: grid; gap: 12px; margin: 32px 0; }
+      .bar { padding: 14px 18px; border-radius: 10px; background: #f1f1f4; font-size: 13px; }
+      button.cta { padding: 10px 18px; border: 0; border-radius: 999px; background: #0b0b0c; color: #fff; font-size: 13px; }
+      /* Mimics a component library (MUI, Chakra) that declares font-family and
+         colour on the leaf, so a parent-level change has no visible effect
+         unless the tool cascades it. */
+      .panel { padding: 16px; border: 1px solid #e4e4e7; border-radius: 12px; margin: 24px 0; }
+      .panel .Typography { font-family: Georgia, serif !important; color: #333 !important; margin: 0 0 6px; }
+      .actions { display: flex; gap: 10px; align-items: center; padding: 12px; background: #f3f6ff; border-radius: 10px; margin: 24px 0; }
+      .actions .error { color: #e5484d; font-size: 13px; }
+      /* Contrast-audit cases — see the #ada block below for the expected ratios. */
+      #ada { margin: 32px 0; padding: 16px; border: 1px dashed #d4d4d8; border-radius: 12px; background: #fff; }
+      #ada p { margin: 0 0 8px; font-size: 15px; }
+      .c-fail { color: #999999; }
+      .c-pass { color: #767676; }
+      .c-large-fail { color: #999999; font-size: 28px !important; }
+      .c-large-pass { color: #888888; font-size: 20px !important; font-weight: 700; }
+      .c-dark { padding: 12px; background: #222222; border-radius: 8px; }
+      /* Paints nothing at all: the point is that the walk passes straight through. */
+      .c-bare { padding: 2px; }
+      .c-on-dark-pass { color: #ffffff; }
+      .c-on-dark-fail { color: #555555; }
+      .c-scrim { margin-top: 12px; padding: 12px; background: rgba(0, 0, 0, 0.5); border-radius: 8px; }
+      .c-on-scrim { color: #ffffff; }
+      .c-gradient { margin-top: 12px; padding: 12px; border-radius: 8px; background: linear-gradient(90deg, #ffffff, #111111); }
+      .c-gradient p { color: #808080; }
+      .c-invisible { color: transparent; }
+      .c-hidden { display: none; }
+      .c-icons { display: flex; gap: 10px; margin-top: 12px; }
+      #tabs { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin: 32px 0; padding: 16px; border: 1px dashed #d4d4d8; border-radius: 12px; }
+      #tabs > *, #tabs .radios { font-size: 13px; }
+      #tabs [tabindex='0'] { padding: 6px 10px; border: 1px solid #d4d4d8; border-radius: 8px; }
+      #names, #alts { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin: 32px 0; padding: 16px; border: 1px dashed #d4d4d8; border-radius: 12px; }
+      #names [role='button'] { width: 34px; height: 26px; border: 1px solid #d4d4d8; border-radius: 8px; }
+      #names input { padding: 5px 8px; border: 1px solid #d4d4d8; border-radius: 6px; font-size: 13px; }
+      .logo-mask {
+        display: inline-block; width: 117px; height: 36px; background-color: #c7c7c7;
+        mask-image: var(--logo); -webkit-mask-image: var(--logo);
+        mask-repeat: no-repeat; -webkit-mask-repeat: no-repeat;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="page">
+      <h1>Fixture page</h1>
+      <p>
+        Nested containers, a flex row, a vertical stack and a link — enough to exercise hover,
+        deep selection, resizing, spacing drags, sibling reordering and text editing.
+      </p>
+
+      <div class="row">
+        <div class="card"><h3>Card one</h3><p>Ctrl/Cmd+click to drill into this heading.</p></div>
+        <div class="card"><h3>Card two</h3><p>Drag the grip to swap these two cards.</p></div>
+        <div class="card"><h3>Card three</h3><p>Pull the green band to change padding.</p></div>
+      </div>
+
+      <div class="stack">
+        <div class="bar">Stack row A — vertical reordering</div>
+        <div class="bar">Stack row B</div>
+        <div class="bar">Stack row C</div>
+      </div>
+
+      <div class="panel">
+        <h2 class="Typography">Component-library heading</h2>
+        <p class="Typography">
+          This leaf sets its own font-family and colour with !important, the way a UI
+          library does. Selecting the panel and changing the font must still land here.
+        </p>
+      </div>
+
+      <!-- Media, for the download button and X-ray dimming. Data URLs so the
+           fixture works offline and exercises the non-http download path. -->
+      <div class="row" id="media">
+        <img
+          alt="red square"
+          width="120"
+          height="80"
+          src="data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='80'%3E%3Crect width='120' height='80' fill='%23e5484d'/%3E%3C/svg%3E"
+        />
+        <svg width="80" height="80" viewBox="0 0 80 80">
+          <circle cx="40" cy="40" r="34" fill="#0a84ff" />
+        </svg>
+        <canvas width="120" height="80" id="fixture-canvas"></canvas>
+        <!-- Masked icon: the file is in mask-image via a custom property, and
+             the visible colour is a flat background. This is how icon strips are
+             built in the wild, and the SVG is invisible to a background-image
+             check. -->
+        <span
+          class="logo-mask"
+          style="--logo: url('logo.svg')"
+          role="img"
+          aria-label="Wikipedia"
+        ></span>
+      </div>
+
+      <!-- Two items that want opposite ends of the same row: the case
+           alignment can't express, because both ends are involved. -->
+      <div class="actions">
+        <button type="button" class="cta">Reconnect</button>
+        <span class="error">Unable to connect to Salesforce.</span>
+      </div>
+
+      <p><a href="https://example.com">A link that must not navigate while editing</a></p>
+      <button class="cta" type="button">Call to action <i>›</i></button>
+
+      <!--
+        Contrast-audit cases with known answers. Every ratio below is computed
+        from the WCAG 2.1 formula, so the audit can be asserted against numbers
+        rather than eyeballed. data-expect says what the checker should conclude.
+      -->
+      <div id="ada">
+        <p class="c-fail" data-expect="fail 2.85">#999 on white — 2.85:1, needs 4.5</p>
+        <p class="c-pass" data-expect="pass 4.54">#767676 on white — 4.54:1, just clears 4.5</p>
+        <p class="c-large-fail" data-expect="fail 2.85">28px #999 — 2.85:1, needs 3 for large text</p>
+        <p class="c-large-pass" data-expect="pass 3.54">20px bold #888 — 3.54:1, clears 3 as large text</p>
+
+        <!-- The nesting case: neither wrapper paints, so the walk has to keep
+             going until it reaches the dark box three levels up. -->
+        <div class="c-dark">
+          <div class="c-bare">
+            <div class="c-bare">
+              <p class="c-on-dark-pass" data-expect="pass 15.9">White, three levels above #222 — 15.9:1</p>
+              <p class="c-on-dark-fail" data-expect="fail 2.13">#555, three levels above #222 — 2.13:1</p>
+            </div>
+          </div>
+        </div>
+
+        <!-- Translucent background: blends to #808080 over the white page. -->
+        <div class="c-scrim"><p class="c-on-scrim" data-expect="fail 3.95">White on 50% black over white — 3.95:1</p></div>
+
+        <!-- Not judged: no solid colour exists behind these. -->
+        <div class="c-gradient"><p data-expect="uncertain">Text over a gradient — must be skipped, not flagged</p></div>
+
+        <p class="c-invisible" data-expect="skip">Transparent text — image replacement, not a bug</p>
+        <p class="c-hidden" data-expect="skip">display:none, so nothing to judge</p>
+
+        <div class="c-icons">
+          <svg class="c-icon-fail" data-expect="fail" width="20" height="20" viewBox="0 0 20 20">
+            <circle cx="10" cy="10" r="8" fill="#dcdcdc" />
+          </svg>
+          <svg class="c-icon-pass" data-expect="pass" width="20" height="20" viewBox="0 0 20 20">
+            <circle cx="10" cy="10" r="8" fill="#3a3a3a" />
+          </svg>
+          <!-- Two-tone: the dark half carries it, so the icon is discernible. -->
+          <svg class="c-icon-two-tone" data-expect="pass" width="20" height="20" viewBox="0 0 20 20">
+            <rect x="1" y="1" width="8" height="18" fill="#f0f0f0" />
+            <rect x="11" y="1" width="8" height="18" fill="#333333" />
+          </svg>
+        </div>
+      </div>
+
+      <!--
+        Tab-order cases. data-t names each one; data-stop says where it should
+        land in the *page-wide* sequence, and "skip" means it must not be a stop
+        at all. The two positive tabindex values are the point of the exercise:
+        they jump in front of every element on the page that doesn't have one.
+      -->
+      <div id="tabs">
+        <button type="button" tabindex="2" data-t="P2" data-stop="2">positive tabindex 2</button>
+        <button type="button" tabindex="1" data-t="P1" data-stop="1">positive tabindex 1</button>
+
+        <button type="button" data-t="A">natural button</button>
+        <a href="#a" data-t="B">natural link</a>
+        <div tabindex="0" data-t="C">div with tabindex 0</div>
+        <!-- Focusable but invisible: opacity does not remove a stop, which is a
+             real bug on real pages, so it has to show up here. -->
+        <button type="button" style="opacity: 0" data-t="D">invisible but focusable</button>
+
+        <button type="button" tabindex="-1" data-t="neg" data-stop="skip">tabindex -1</button>
+        <button type="button" disabled data-t="dis" data-stop="skip">disabled</button>
+        <input type="hidden" data-t="hid" data-stop="skip" />
+        <div style="display: none"><button type="button" data-t="none" data-stop="skip">display none</button></div>
+        <div style="visibility: hidden"><button type="button" data-t="vis" data-stop="skip">visibility hidden</button></div>
+        <div inert><button type="button" data-t="inert" data-stop="skip">inside inert</button></div>
+
+        <!-- One stop for the whole group, and it is the checked one. -->
+        <span class="radios">
+          <label><input type="radio" name="pick" data-t="r1" data-stop="skip" /> one</label>
+          <label><input type="radio" name="pick" data-t="r2" checked /> two</label>
+          <label><input type="radio" name="pick" data-t="r3" data-stop="skip" /> three</label>
+        </span>
+      </div>
+
+      <!--
+        Accessible-name cases. data-aria is the reason the check should give, or
+        "ok" when the element is properly named.
+      -->
+      <div id="names">
+        <button type="button" data-aria="no name"><svg width="14" height="14" viewBox="0 0 14 14"><circle cx="7" cy="7" r="6" fill="#0b0b0c"/></svg></button>
+        <button type="button" aria-label="Close dialog" data-aria="ok"><svg width="14" height="14" viewBox="0 0 14 14"><path d="M3 3l8 8M11 3l-8 8" stroke="#0b0b0c" stroke-width="2"/></svg></button>
+        <button type="button" data-aria="ok">Has real text</button>
+        <a href="#x" data-aria="no name"><svg width="14" height="14" viewBox="0 0 14 14"><rect x="2" y="2" width="10" height="10" fill="#0a84ff"/></svg></a>
+
+        <input type="text" data-aria="no name" />
+        <input type="text" placeholder="Your email" data-aria="placeholder only" />
+        <label>Properly labelled <input type="text" data-aria="ok" /></label>
+        <input type="text" aria-labelledby="missing-heading" data-aria="broken ref" />
+        <input type="text" title="Search" data-aria="title only" />
+        <input type="submit" value="Send" data-aria="ok" />
+
+        <!-- Reachable by Tab, but removed from the accessibility tree. -->
+        <button type="button" aria-hidden="true" data-aria="hidden + focusable">Ghost</button>
+        <!-- Correctly hidden: not focusable, so not a problem. -->
+        <span aria-hidden="true" data-aria="ok">decorative ✳</span>
+
+        <div role="button" tabindex="0" data-aria="no name"></div>
+        <div role="button" tabindex="0" aria-label="Custom control" data-aria="ok"></div>
+      </div>
+
+      <!-- Image alt cases. data-alt is the expected reason, or "ok". -->
+      <div id="alts">
+        <img data-alt="no alt" width="40" height="30" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='40' height='30'%3E%3Crect width='40' height='30' fill='%237ac943'/%3E%3C/svg%3E" />
+        <img data-alt="ok" alt="A green rectangle" width="40" height="30" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='40' height='30'%3E%3Crect width='40' height='30' fill='%230a84ff'/%3E%3C/svg%3E" />
+        <img data-alt="ok" alt="" width="40" height="30" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='40' height='30'%3E%3Crect width='40' height='30' fill='%23d4d4d8'/%3E%3C/svg%3E" />
+        <img data-alt="filename alt" alt="IMG_2043.jpg" width="40" height="30" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='40' height='30'%3E%3Crect width='40' height='30' fill='%23f6853f'/%3E%3C/svg%3E" />
+
+        <!-- The empty alt is the link's only possible name, so it has none. -->
+        <a href="#nameless" data-alt-holder><img data-alt="empty alt in link" alt="" width="40" height="30" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='40' height='30'%3E%3Crect width='40' height='30' fill='%23e5484d'/%3E%3C/svg%3E" /></a>
+        <!-- Same shape, but the link has text of its own, so the empty alt is right. -->
+        <a href="#named">Read more <img data-alt="ok" alt="" width="16" height="16" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16'%3E%3Crect width='16' height='16' fill='%230b0b0c'/%3E%3C/svg%3E" /></a>
+
+        <svg role="img" data-alt="no name" width="30" height="30" viewBox="0 0 30 30"><circle cx="15" cy="15" r="12" fill="#a1a1aa"/></svg>
+        <svg role="img" aria-label="A named circle" data-alt="ok" width="30" height="30" viewBox="0 0 30 30"><circle cx="15" cy="15" r="12" fill="#71717a"/></svg>
+        <svg role="img" data-alt="ok" width="30" height="30" viewBox="0 0 30 30"><title>Titled circle</title><circle cx="15" cy="15" r="12" fill="#52525b"/></svg>
+      </div>
+    </div>
+
+    <!--
+      Local harness only (npm run serve). The extension isn't installed here, so
+      we stub the two chrome APIs the bundle touches, load the built content
+      script by hand and arm it. In the real extension this block is inert: the
+      content script runs in an isolated world and has already mounted.
+    -->
+    <script>
+      const ctx = document.getElementById('fixture-canvas').getContext('2d')
+      ctx.fillStyle = '#7ac943'
+      ctx.fillRect(0, 0, 120, 80)
+      ctx.fillStyle = '#0b0b0c'
+      ctx.fillRect(20, 20, 40, 40)
+    </script>
+    <script>
+      const c = (window.chrome ??= {})
+      c.runtime ??= { onMessage: { addListener() {} } }
+      c.runtime.onMessage ??= { addListener() {} }
+      c.storage ??= { sync: { get: () => Promise.resolve({}) } }
+      /*
+        Stands in for chrome.storage.session + onChanged, which is how the
+        cross-tab clipboard travels. localStorage has the same shape of contract
+        for our purposes — shared by every same-origin tab, with a change event —
+        so opening this fixture in two tabs exercises the real handoff path.
+      */
+      const SHELF = 'dominator:harness-shelf'
+      const shelfListeners = new Set()
+      c.storage.session ??= {
+        get: (key) => {
+          const raw = localStorage.getItem(SHELF)
+          return Promise.resolve(raw ? { [key]: JSON.parse(raw) } : {})
+        },
+        set: (entries) => {
+          const [value] = Object.values(entries)
+          localStorage.setItem(SHELF, JSON.stringify(value))
+          return Promise.resolve()
+        },
+      }
+      c.storage.onChanged ??= {
+        addListener: (fn) => shelfListeners.add(fn),
+        removeListener: (fn) => shelfListeners.delete(fn),
+      }
+      addEventListener('storage', (event) => {
+        if (event.key !== SHELF || !event.newValue) return
+        const change = { 'dominator:handoff': { newValue: JSON.parse(event.newValue) } }
+        for (const fn of shelfListeners) fn(change, 'session')
+      })
+      // Font requests go to the worker in the real extension; here they go to
+      // the harness server's proxy, which makes the identical calls.
+      c.runtime.sendMessage ??= (message) => {
+        // Stands in for chrome.tabs.captureVisibleTab. Every document row gets a
+        // unique colour derived from its Y, so a stitched screenshot can be
+        // checked pixel-by-pixel against the region it claims to cover.
+        if (message?.type === 'capture:viewport') {
+          const canvas = document.createElement('canvas')
+          canvas.width = innerWidth
+          canvas.height = innerHeight
+          const g = canvas.getContext('2d')
+          for (let y = 0; y < innerHeight; y += 1) {
+            const docY = Math.round(scrollY) + y
+            g.fillStyle = `rgb(${docY % 256}, ${(docY >> 8) % 256}, 100)`
+            g.fillRect(0, y, innerWidth, 1)
+          }
+          return Promise.resolve({ ok: true, data: canvas.toDataURL('image/png') })
+        }
+        if (message?.type === 'fonts:list') return fetch('/gf/list').then((r) => r.json())
+        if (message?.type === 'fonts:face') {
+          const q = new URLSearchParams({ family: message.family, weight: String(message.weight) })
+          if (message.preview) q.set('preview', '1')
+          return fetch(`/gf/face?${q}`).then((r) => r.json())
+        }
+        return Promise.resolve({ ok: false, error: 'unhandled' })
+      }
+    </script>
+    <script src="../dist/content.js"></script>
+    <script>
+      window.__dominator?.controller.activate()
+    </script>
+  </body>
+</html>

@@ -1,0 +1,8 @@
+# Store every text file with LF in the repository, whatever the checkout does
+# locally. Without this, committing from Windows bakes CRLF into the objects and
+# anyone cloning on macOS or Linux gets a diff on every line they touch.
+* text=auto eol=lf
+
+*.png binary
+*.zip binary
+*.svg text eol=lf
