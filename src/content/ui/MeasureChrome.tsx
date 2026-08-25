@@ -1,5 +1,6 @@
 import { describe } from '../core/geometry'
 import type { Node } from '../core/store'
+import { DimensionPill } from './DimensionPill'
 import { GapOverlay } from './GapOverlay'
 import { SpacingOverlay } from './SpacingOverlay'
 import { rectStyle } from './util'
@@ -60,9 +61,7 @@ export function MeasureChrome({
           )}
         </span>
 
-        <span className="dm-panel absolute -bottom-[26px] left-1/2 -translate-x-1/2 px-1.5 py-[2px] text-[10px] font-medium text-ink-soft tabular-nums">
-          {Math.round(rect.width)} × {Math.round(rect.height)}
-        </span>
+        <DimensionPill rect={rect} />
       </div>
     </>
   )

@@ -355,16 +355,27 @@ export function wrap(plan: Extract<GroupPlan, { ok: true }>): HTMLElement {
   for (const el of items) wrapper.append(el)
   if (span !== null) reconcile(wrapper, parentAxis, span)
 
-  history.push({
-    label: 'group',
-    undo: () => {
+  // Where the wrapper ended up, and what grouping did to each item's styles:
+  // between them, everything redo needs to rebuild the group as it stood.
+  const wrapperHome = wrapper.parentNode
+  const wrapperNext = wrapper.nextSibling
+  const grouped = restore.map(({ el }) => [el, el.getAttribute('style')] as const)
+
+  history.record(
+    'group',
+    () => {
       for (const { el, parent: home, next, style } of restore) {
         restoreStyle(el, style)
         home.insertBefore(el, next)
       }
       wrapper.remove()
     },
-  })
+    () => {
+      wrapperHome?.insertBefore(wrapper, wrapperNext)
+      for (const el of items) wrapper.append(el)
+      for (const [el, style] of grouped) restoreStyle(el, style)
+    },
+  )
 
   return wrapper
 }
@@ -386,13 +397,17 @@ export function unwrap(wrapper: HTMLElement): HTMLElement[] {
   for (const node of moved) parent.insertBefore(node, wrapper)
   wrapper.remove()
 
-  history.push({
-    label: 'ungroup',
-    undo: () => {
+  history.record(
+    'ungroup',
+    () => {
       parent.insertBefore(wrapper, next)
       for (const node of moved) wrapper.append(node)
     },
-  })
+    () => {
+      for (const node of moved) parent.insertBefore(node, wrapper)
+      wrapper.remove()
+    },
+  )
 
   return moved.filter((node): node is HTMLElement => node instanceof HTMLElement)
 }

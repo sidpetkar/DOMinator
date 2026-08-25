@@ -1,3 +1,4 @@
+import { OWN_NODE_ATTR } from '@/shared/constants'
 import { askBackground } from '@/shared/messages'
 
 export interface Media {
@@ -23,14 +24,60 @@ function extensionOf(url: string, kind: Media['kind']): string {
   return mime.replace(/^svg\+xml$/, 'svg').replace(/^jpeg$/, 'jpg').split('+')[0] ?? EXTENSION[kind]
 }
 
+/** Last path segment of a URL or a bare path, decoded. */
+function basename(value: string): string {
+  const path = /^[a-z][a-z0-9+.-]*:\/\//i.test(value)
+    ? (() => {
+        try {
+          return new URL(value).pathname
+        } catch {
+          return value
+        }
+      })()
+    : value.split('?')[0] ?? value
+  try {
+    return decodeURIComponent(path.split('/').filter(Boolean).pop() ?? '')
+  } catch {
+    return path.split('/').filter(Boolean).pop() ?? ''
+  }
+}
+
+const named = (base: string): boolean => Boolean(base) && /\.[a-z0-9]{2,5}$/i.test(base)
+
+/**
+ * Query keys that image proxies put the *real* URL in.
+ *
+ * A resizing CDN serves everything from one path — `/_next/image`, `/cdn-cgi/…`,
+ * a bare `/` — and carries the source as a parameter. Reading only the path
+ * there gives every image on the site the same name, which is precisely the
+ * moment a filename stops being worth anything: five downloads called
+ * `image.png`, `image (1).png`, `image (2).png`. The name the project actually
+ * uses for the asset is sitting in the query string.
+ */
+const PROXY_KEYS = ['url', 'src', 'image', 'img', 'file', 'path', 'source', 'uri']
+
+function proxiedName(search: URLSearchParams): string | null {
+  for (const key of PROXY_KEYS) {
+    const value = search.get(key)
+    const base = value ? basename(value) : ''
+    if (named(base)) return base
+  }
+  return null
+}
+
 function nameFor(url: string, kind: Media['kind']): string {
   // A data: or blob: URL has no path — its "last segment" is base64 payload, so
   // parsing one for a filename produces garbage rather than a name.
   if (/^(data|blob):/i.test(url)) return `dominator-${kind}.${extensionOf(url, kind)}`
   try {
-    const path = new URL(url, location.href).pathname
-    const base = decodeURIComponent(path.split('/').filter(Boolean).pop() ?? '')
-    if (base && /\.[a-z0-9]{2,5}$/i.test(base)) return base
+    const parsed = new URL(url, location.href)
+    const base = basename(parsed.pathname)
+    // A real filename on the path wins outright; only when the path has none is
+    // it worth going looking in the query, or we would rename `photo.jpg?url=…`
+    // after somebody else's thumbnail.
+    if (named(base)) return base
+    const proxied = proxiedName(parsed.searchParams)
+    if (proxied) return proxied
     if (base) return `${base}.${EXTENSION[kind]}`
   } catch {
     /* not a parseable URL */
@@ -155,6 +202,9 @@ export async function download(media: Media): Promise<boolean> {
 
   try {
     const link = document.createElement('a')
+    // Ours, not the page's — otherwise the editor swallows the link's own click,
+    // which cancels the download, and selects whatever sits at (0, 0).
+    link.setAttribute(OWN_NODE_ATTR, '')
     link.href = media.url
     link.download = media.filename
     link.rel = 'noopener'

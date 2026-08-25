@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, useState, type ReactNode } from 'react'
+import { useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { LOGO_DATA_URL } from '@/shared/logo'
 import * as clipboard from '../core/clipboard'
 import { controller } from '../core/controller'
@@ -11,12 +11,17 @@ import {
   AriaIcon,
   CameraIcon,
   ContrastIcon,
+  FullPageIcon,
   InfoIcon,
+  RegionIcon,
   PasteIcon,
+  RedoIcon,
   TabOrderIcon,
   UndoIcon,
   XrayIcon,
 } from './icons'
+import { ExpandGroup } from './ExpandGroup'
+import { PanelGrip, usePanelDrag } from './PanelGrip'
 import { SHORTCUT_GROUPS } from './shortcuts'
 import { cx, zoomStable } from './util'
 
@@ -53,33 +58,39 @@ export function StatusBar({ snapshot }: { snapshot: EditorSnapshot }) {
     if (measured && Math.abs(measured - height) > 2) setHeight(measured)
   })
   const wrapped = height > ROW_HEIGHT + 6
+  const grip = usePanelDrag('status', barRef)
+
+  /**
+   * Anchored, it is centred by `margin: auto` between two pinned edges rather
+   * than by `left: 50%` and a translate.
+   *
+   * They look identical until the bar is allowed to wrap: a fixed box at
+   * `left: 50%` has only the right *half* of the viewport as its available
+   * width, so it would start wrapping at 385px on a 770px window — half the
+   * room it actually has. Pinning both edges hands it the whole width, and
+   * `fit-content` keeps it hugging its pills.
+   *
+   * Dragged, it is placed outright, and the auto margins have to go with the
+   * anchoring — they would fight a fixed `left` for the same axis and win.
+   */
+  const place: CSSProperties = grip.pinned
+    ? { left: grip.pinned.left, top: grip.pinned.top }
+    : { bottom: 16, left: 0, right: 0, marginInline: 'auto' }
 
   return (
     <div
       ref={barRef}
-      className="dm-panel dm-interactive flex flex-wrap items-center justify-center gap-1.5 py-1 pr-1 pl-2.5"
+      className="dm-panel dm-interactive flex flex-wrap items-center justify-center gap-1.5 py-1 pr-1 pl-2"
       style={{
         position: 'fixed',
-        bottom: 16,
-        /**
-         * Centred by `margin: auto` between two pinned edges rather than by
-         * `left: 50%` and a translate.
-         *
-         * They look identical until the bar is allowed to wrap: a fixed box at
-         * `left: 50%` has only the right *half* of the viewport as its available
-         * width, so it would start wrapping at 385px on a 770px window — half the
-         * room it actually has. Pinning both edges hands it the whole width, and
-         * `fit-content` keeps it hugging its pills.
-         */
-        left: 0,
-        right: 0,
-        marginInline: 'auto',
+        ...place,
         width: 'fit-content',
         maxWidth: 'calc(100vw - 24px)',
         borderRadius: wrapped ? 16 : 'var(--radius-pill)',
-        ...zoomStable(zoom(), 'bottom center'),
+        ...zoomStable(zoom(), grip.pinned ? 'top left' : 'bottom center'),
       }}
     >
+      <PanelGrip onGrab={grip.onGrab} reset={grip.reset} />
       <img
         src={LOGO_DATA_URL}
         alt=""
@@ -139,13 +150,7 @@ export function StatusBar({ snapshot }: { snapshot: EditorSnapshot }) {
         </Pill>
       )}
 
-      <Pill
-        label="Screenshot"
-        title="Capture a region — drag past the edge for a long screenshot (S, S)"
-        onClick={() => controller.startScreenshot()}
-      >
-        <CameraIcon />
-      </Pill>
+      <ShotGroup snapshot={snapshot} />
 
       <Pill
         label="X-ray"
@@ -168,6 +173,20 @@ export function StatusBar({ snapshot }: { snapshot: EditorSnapshot }) {
         {snapshot.undoDepth ? snapshot.undoDepth : ''}
       </Pill>
 
+      {/* Only there once there is something to put back. A permanently greyed
+          button would take up room in the bar for a state that is empty most of
+          the time — you have to undo before redo can mean anything. */}
+      {snapshot.redoDepth > 0 && (
+        <Pill
+          label="Redo"
+          title="Put back what you just undid (Ctrl/Cmd+Shift+Z)"
+          onClick={() => controller.redo()}
+        >
+          <RedoIcon />
+          {snapshot.redoDepth}
+        </Pill>
+      )}
+
       <Pill label="Reset" title="Drop every change" onClick={() => controller.reset()}>
         Reset{edits ? ` (${edits})` : ''}
       </Pill>
@@ -175,6 +194,54 @@ export function StatusBar({ snapshot }: { snapshot: EditorSnapshot }) {
         Exit
       </Pill>
     </div>
+  )
+}
+
+/**
+ * The camera, and the two kinds of screenshot folded in behind it.
+ *
+ * The camera is a door, not an action — the same shape as the accessibility
+ * pill. It was tried the other way first, arming the region capture on the same
+ * click that opened the group, and the reveal was never once seen: arming
+ * replaces the whole of our chrome with the capture surface, so the animation
+ * played to an empty screen and the buttons were simply *there* the next time
+ * the bar came back. A fold that nobody watches unfold is just a hidden button.
+ *
+ * So both captures live inside, and neither is the camera's own job. `S, S`
+ * still arms a region in one gesture without going through here at all, which is
+ * the fast path for the one people reach for most.
+ */
+function ShotGroup({ snapshot }: { snapshot: EditorSnapshot }) {
+  const open = snapshot.shotOpen
+
+  return (
+    <>
+      <Pill
+        label="Screenshot"
+        title="Screenshot — a region, or the whole page"
+        active={open}
+        onClick={() => controller.toggleShotTools()}
+      >
+        <CameraIcon />
+      </Pill>
+
+      <ExpandGroup open={open}>
+        <Pill
+          label="Region"
+          title="Drag out a region — drag past the edge for a long screenshot (S, S)"
+          onClick={() => controller.startScreenshot()}
+        >
+          <RegionIcon />
+        </Pill>
+        <Pill
+          label="Whole page"
+          title="Capture the entire page in one click — top to bottom, no dragging"
+          onClick={() => void controller.captureFullPage()}
+        >
+          <FullPageIcon />
+        </Pill>
+      </ExpandGroup>
+    </>
   )
 }
 
@@ -228,67 +295,40 @@ function AdaGroup({ snapshot }: { snapshot: EditorSnapshot }) {
         )}
       </Pill>
 
-      <div
-        aria-hidden={!open}
-        /**
-         * `inert` as well as `aria-hidden`: the buttons stay in the DOM so they
-         * can animate, and focusable controls inside an `aria-hidden` subtree are
-         * exactly the bug this panel exists to find. `inert` takes them out of the
-         * tab order and out of hit testing, which `aria-hidden` alone does not.
-         */
-        inert={!open}
-        style={{
-          display: 'grid',
-          gridTemplateColumns: open ? '1fr' : '0fr',
-          overflow: 'hidden',
-          /**
-           * A `0fr` track still floors at its content's min-content width, which
-           * padding contributes to — so the group's spacing comes from the bar's
-           * own flex gap instead, and the closed group is genuinely zero-wide. The
-           * negative margin then cancels the trailing gap, or a folded group would
-           * leave a 12px hole between X-ray and Undo.
-           */
-          marginRight: open ? 0 : -6,
-          transition:
-            'grid-template-columns 220ms cubic-bezier(0.2, 0.8, 0.2, 1), opacity 160ms ease, margin-right 220ms cubic-bezier(0.2, 0.8, 0.2, 1)',
-          opacity: open ? 1 : 0,
-        }}
-      >
-        <div className="flex min-w-0 items-center gap-1.5">
-          <Pill
-            label="Contrast"
-            title="Check every text and icon colour on the page against what is behind it (WCAG AA)"
-            active={lens?.kind === 'contrast'}
-            onClick={() => controller.toggleLens('contrast')}
-          >
-            <ContrastIcon />
-          </Pill>
-          <Pill
-            label="Names"
-            title="Find controls a screen reader cannot announce — icon-only buttons, unlabelled inputs, broken aria-labelledby"
-            active={lens?.kind === 'aria'}
-            onClick={() => controller.toggleLens('aria')}
-          >
-            <AriaIcon />
-          </Pill>
-          <Pill
-            label="Tab order"
-            title="Number every keyboard tab stop in the order Tab actually visits them"
-            active={lens?.kind === 'tab'}
-            onClick={() => controller.toggleLens('tab')}
-          >
-            <TabOrderIcon />
-          </Pill>
-          <Pill
-            label="Alt text"
-            title="Find images with no alt text, a file name for a description, or an empty alt where a link's only name should be"
-            active={lens?.kind === 'alt'}
-            onClick={() => controller.toggleLens('alt')}
-          >
-            <AltTextIcon />
-          </Pill>
-        </div>
-      </div>
+      <ExpandGroup open={open}>
+        <Pill
+          label="Contrast"
+          title="Check every text and icon colour on the page against what is behind it (WCAG AA)"
+          active={lens?.kind === 'contrast'}
+          onClick={() => controller.toggleLens('contrast')}
+        >
+          <ContrastIcon />
+        </Pill>
+        <Pill
+          label="Names"
+          title="Find controls a screen reader cannot announce — icon-only buttons, unlabelled inputs, broken aria-labelledby"
+          active={lens?.kind === 'aria'}
+          onClick={() => controller.toggleLens('aria')}
+        >
+          <AriaIcon />
+        </Pill>
+        <Pill
+          label="Tab order"
+          title="Number every keyboard tab stop in the order Tab actually visits them"
+          active={lens?.kind === 'tab'}
+          onClick={() => controller.toggleLens('tab')}
+        >
+          <TabOrderIcon />
+        </Pill>
+        <Pill
+          label="Alt text"
+          title="Find images with no alt text, a file name for a description, or an empty alt where a link's only name should be"
+          active={lens?.kind === 'alt'}
+          onClick={() => controller.toggleLens('alt')}
+        >
+          <AltTextIcon />
+        </Pill>
+      </ExpandGroup>
     </>
   )
 }
@@ -314,7 +354,14 @@ function ShortcutCard() {
      * the wrapper's bottom to the pill's top edge and pushing the card up with
      * transparent padding makes the whole thing one continuous hover region.
      */
-    <div style={{ position: 'absolute', bottom: '100%', left: 0, paddingBottom: 8 }}>
+    <div
+      style={{
+        position: 'absolute',
+        bottom: '100%',
+        left: 0,
+        paddingBottom: 8,
+      }}
+    >
       <div className="dm-panel flex flex-col gap-2 px-3 py-2.5" style={{ width: 268 }}>
         {SHORTCUT_GROUPS.map((group, index) => (
           <div key={group.title} className={index ? 'border-t border-line pt-2' : undefined}>
@@ -375,22 +422,10 @@ function Pill({
       onClick={onClick}
       className={cx(
         'flex items-center gap-1 whitespace-nowrap rounded-[var(--radius-pill)] border-0 px-2.5 py-[3px] text-[11px] font-medium disabled:opacity-35',
-        active
-          ? 'bg-[color:var(--color-select)] text-paper'
-          : 'bg-ink/5 text-ink hover:bg-ink/10',
+        active ? 'bg-[color:var(--color-select)] text-paper' : 'bg-ink/5 text-ink hover:bg-ink/10',
       )}
     >
       {children}
     </button>
   )
 }
-
-
-
-
-
-
-
-
-
-

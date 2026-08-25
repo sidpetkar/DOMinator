@@ -1,9 +1,13 @@
+import arrowClockwise from 'bootstrap-icons/icons/arrow-clockwise.svg?raw'
 import arrowCounterclockwise from 'bootstrap-icons/icons/arrow-counterclockwise.svg?raw'
 import borderOuter from 'bootstrap-icons/icons/border-outer.svg?raw'
 import borderStyle from 'bootstrap-icons/icons/border-style.svg?raw'
 import boundingBox from 'bootstrap-icons/icons/bounding-box.svg?raw'
 import boundingBoxCircles from 'bootstrap-icons/icons/bounding-box-circles.svg?raw'
 import camera from 'bootstrap-icons/icons/camera.svg?raw'
+import crop from 'bootstrap-icons/icons/crop.svg?raw'
+import fileEarmarkImage from 'bootstrap-icons/icons/file-earmark-image.svg?raw'
+import imageIcon from 'bootstrap-icons/icons/image.svg?raw'
 import check from 'bootstrap-icons/icons/check.svg?raw'
 import circleHalf from 'bootstrap-icons/icons/circle-half.svg?raw'
 import clipboard from 'bootstrap-icons/icons/clipboard.svg?raw'
@@ -25,6 +29,7 @@ import textLeft from 'bootstrap-icons/icons/text-left.svg?raw'
 import textRight from 'bootstrap-icons/icons/text-right.svg?raw'
 import threeDots from 'bootstrap-icons/icons/three-dots.svg?raw'
 import universalAccess from 'bootstrap-icons/icons/universal-access.svg?raw'
+import type { ReactNode } from 'react'
 import type { AlignPos, Axis, Distribution } from '../core/layout'
 
 /**
@@ -118,6 +123,7 @@ export const InfoIcon = glyph(infoCircle, 12)
 export const CameraIcon = glyph(camera, 12)
 export const PasteIcon = glyph(clipboard, 12)
 export const UndoIcon = glyph(arrowCounterclockwise, 12)
+export const RedoIcon = glyph(arrowClockwise, 12)
 export const XrayIcon = glyph(boundingBox, 12)
 
 /** Accessibility: the universal access mark, which is the one everyone knows. */
@@ -129,6 +135,15 @@ export const TabOrderIcon = glyph(listOl, 13)
 export const AltTextIcon = glyph(imageAlt, 13)
 
 // — elsewhere ————————————————————————————————————————————————————
+
+/** The whole page as one picture — a document with an image in it. */
+export const FullPageIcon = glyph(fileEarmarkImage, 13)
+
+/** Crop marks: the capture you draw the edges of yourself. */
+export const RegionIcon = glyph(crop, 13)
+
+/** Put a picture in this box. */
+export const ImageIcon = glyph(imageIcon, 12)
 
 export const SearchIcon = glyph(search, 12)
 export const FrameIcon = glyph(boundingBox, 13)
@@ -265,15 +280,207 @@ export function AlignIcon({ axis, pos }: { axis: 'h' | 'v'; pos: AlignPos }) {
 }
 
 /**
- * The selection frame's move grip, in white on the selection blue.
- *
- * Not Bootstrap's: it sits on a solid chip where a stroked glyph disappears, so it
- * stays a dot matrix — the one mark in the set that has to read as *filled*.
+ * The selection frame's move grip — the same Bootstrap 6-dot mark the floating
+ * panels carry, so "pick this up and move it" is one gesture with one icon
+ * wherever it appears. It inherits `currentColor`, which is the white the chip
+ * under it sets.
  */
-export const SelectionGripIcon = () => (
-  <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true">
-    {[2, 5, 8].map((y) =>
-      [3.5, 6.5].map((x) => <circle key={`${x}-${y}`} cx={x} cy={y} r="0.9" fill="white" />),
-    )}
+export const SelectionGripIcon = glyph(gripVertical, 11)
+
+// — the box model, drawn (not Bootstrap) —————————————————————————
+
+/**
+ * Figma's vocabulary for the quantities that have four of everything.
+ *
+ * Padding, margin and corner radius are each one name over four numbers, and the
+ * only way a dense bar can say *which* of the four a field edits is to draw it:
+ * the box, with the edge or the corner in question picked out. Bootstrap has no
+ * equivalent set, and the alternative — labelling them "T", "R", "B", "L" —
+ * turns a row of controls into a crossword. Anyone arriving from Figma reads
+ * these without a legend, which is the same argument the align and stack marks
+ * above are drawn on.
+ *
+ * All of them are outlines at 30% with the subject at full strength, so the
+ * mark reads as "this part of that box" at 13px rather than as a texture.
+ */
+export type BoxEdge = 'top' | 'right' | 'bottom' | 'left'
+export type BoxCorner = 'tl' | 'tr' | 'br' | 'bl'
+
+const EDGE_LINE: Record<BoxEdge, { x1: number; y1: number; x2: number; y2: number }> = {
+  top: { x1: 4.6, y1: 4.2, x2: 11.4, y2: 4.2 },
+  bottom: { x1: 4.6, y1: 11.8, x2: 11.4, y2: 11.8 },
+  left: { x1: 4.2, y1: 4.6, x2: 4.2, y2: 11.4 },
+  right: { x1: 11.8, y1: 4.6, x2: 11.8, y2: 11.4 },
+}
+
+const Mark = ({ children, size = 13 }: { children: ReactNode; size?: number }) => (
+  <svg width={size} height={size} viewBox="0 0 16 16" fill="none" aria-hidden="true">
+    {children}
   </svg>
+)
+
+const Outline = () => (
+  <rect x="3.5" y="3.5" width="9" height="9" rx="1.6" stroke="currentColor" strokeOpacity="0.3" />
+)
+
+/** A box with some of its edges emphasised — one side, or an opposing pair. */
+export const EdgeIcon = ({ edges }: { edges: BoxEdge[] }) => (
+  <Mark>
+    <Outline />
+    {edges.map((edge) => (
+      <line
+        key={edge}
+        {...EDGE_LINE[edge]}
+        stroke="currentColor"
+        strokeWidth="1.9"
+        strokeLinecap="round"
+      />
+    ))}
+  </Mark>
+)
+
+const CORNER_PATH: Record<BoxCorner, string> = {
+  tl: 'M4.2 10.5V6.2A2 2 0 0 1 6.2 4.2h4.3',
+  tr: 'M5.5 4.2h4.3a2 2 0 0 1 2 2v4.3',
+  br: 'M11.8 5.5v4.3a2 2 0 0 1-2 2H5.5',
+  bl: 'M10.5 11.8H6.2a2 2 0 0 1-2-2V5.5',
+}
+
+/** One rounded corner, drawn as the elbow it actually is. */
+export const CornerIcon = ({ corner }: { corner: BoxCorner }) => (
+  <Mark>
+    <path
+      d={CORNER_PATH[corner]}
+      stroke="currentColor"
+      strokeWidth="1.7"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    />
+  </Mark>
+)
+
+/**
+ * The four-corner bracket. It carries two jobs that turn out to be the same
+ * idea: "all four corners at once" on the radius control, and "unfold this into
+ * its four parts" on every group that has parts — a frame around a thing you are
+ * about to take apart.
+ */
+export const CornersIcon = () => (
+  <Mark>
+    <g stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M4.2 6.4V5.4a1.2 1.2 0 0 1 1.2-1.2h1" />
+      <path d="M9.6 4.2h1a1.2 1.2 0 0 1 1.2 1.2v1" />
+      <path d="M11.8 9.6v1a1.2 1.2 0 0 1-1.2 1.2h-1" />
+      <path d="M6.4 11.8h-1a1.2 1.2 0 0 1-1.2-1.2v-1" />
+    </g>
+  </Mark>
+)
+
+/** A card lifted off the page — the shadow is the point, so it is the darker mark. */
+export const ShadowIcon = () => (
+  <Mark>
+    <path
+      d="M6.2 6.2h6.6v6.6"
+      stroke="currentColor"
+      strokeOpacity="0.35"
+      strokeWidth="1.7"
+      strokeLinecap="round"
+    />
+    <rect
+      x="3.4"
+      y="3.4"
+      width="7.2"
+      height="7.2"
+      rx="1.6"
+      stroke="currentColor"
+      strokeWidth="1.4"
+    />
+  </Mark>
+)
+
+/** Blur: the same dot, losing its edges. */
+export const BlurIcon = () => (
+  <Mark>
+    {[0, 1, 2].map((row) =>
+      [0, 1, 2].map((col) => (
+        <circle
+          key={`${row}-${col}`}
+          cx={4.5 + col * 3.5}
+          cy={4.5 + row * 3.5}
+          r="1.1"
+          fill="currentColor"
+          opacity={0.25 + 0.75 / (1 + Math.abs(row - 1) + Math.abs(col - 1))}
+        />
+      )),
+    )}
+  </Mark>
+)
+
+/** Spread: the shadow pushed outwards on every side. */
+export const SpreadIcon = () => (
+  <Mark>
+    <rect x="6" y="6" width="4" height="4" rx="1" fill="currentColor" />
+    <g stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeOpacity="0.55">
+      <path d="M8 3.4v1.2M8 11.4v1.2M3.4 8h1.2M11.4 8h1.2" />
+    </g>
+  </Mark>
+)
+
+/** Opacity, as everything draws it: the checkerboard showing through. */
+export const OpacityIcon = () => (
+  <Mark>
+    <circle cx="8" cy="8" r="4.6" stroke="currentColor" strokeWidth="1.3" />
+    <path d="M8 3.4a4.6 4.6 0 0 1 0 9.2z" fill="currentColor" />
+  </Mark>
+)
+
+/** The angle being measured — a corner with its arc. */
+export const RotationIcon = () => (
+  <Mark>
+    <path
+      d="M4 4v8h8"
+      stroke="currentColor"
+      strokeWidth="1.6"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    />
+    <path
+      d="M11.6 12A7.6 7.6 0 0 0 4 4.4"
+      stroke="currentColor"
+      strokeOpacity="0.4"
+      strokeWidth="1.3"
+      strokeLinecap="round"
+    />
+  </Mark>
+)
+
+/** A quarter turn, in the direction it turns. */
+export const RotateStepIcon = () => (
+  <Mark>
+    <rect x="4" y="7" width="5.5" height="5.5" rx="1.2" stroke="currentColor" strokeWidth="1.4" />
+    <path
+      d="M8.4 5.2A3.4 3.4 0 0 1 12 8.6"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      strokeLinecap="round"
+    />
+    <path d="M6.8 5.6 8.9 3.9l1.1 2.3z" fill="currentColor" />
+  </Mark>
+)
+
+/** Two halves about to swap across the dashed axis they mirror in. */
+export const FlipIcon = ({ axis }: { axis: Axis }) => (
+  <Mark>
+    <g transform={axis === 'row' ? undefined : 'rotate(90 8 8)'}>
+      <path d="M6.8 4.5 3.2 8l3.6 3.5z" fill="currentColor" />
+      <path d="M9.2 4.5 12.8 8l-3.6 3.5z" fill="currentColor" fillOpacity="0.4" />
+      <path
+        d="M8 2.8v10.4"
+        stroke="currentColor"
+        strokeWidth="1.2"
+        strokeLinecap="round"
+        strokeDasharray="1.6 1.6"
+      />
+    </g>
+  </Mark>
 )

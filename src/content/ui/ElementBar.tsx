@@ -1,23 +1,33 @@
-import {
-  useLayoutEffect,
-  useRef,
-  useState,
-  type PointerEvent as ReactPointerEvent,
-  type ReactNode,
-} from 'react'
+import { useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import {
   DEFAULT_BORDER_COLOR,
   readBox,
+  readRadius,
   setBackground,
   setBorder,
   setBorderColor,
   setBorderWidth,
-  nudgeSpacing,
   readSpacing,
+  setCorner,
   setRadius,
   setSide,
-  setSpacing,
+  setSize,
+  type Corner,
+  type Side,
+  type SpacingInfo,
+  type SpacingKind,
 } from '../core/box'
+import {
+  DEFAULT_SHADOW,
+  readPosition,
+  readShadow,
+  setFlip,
+  setRotation,
+  setShadow,
+  type ShadowInfo,
+} from '../core/effects'
+import { COLORS } from '@/shared/constants'
+import { cssColor, hexToRgb, parseColor, rgbToHex } from '../core/color'
 import { controller } from '../core/controller'
 import { isGroup } from '../core/group'
 import * as history from '../core/history'
@@ -33,20 +43,30 @@ import {
   type AlignPos,
 } from '../core/layout'
 import { clearStyle } from '../core/styles'
-import { store, type Node } from '../core/store'
+import { store, type BoxGroup, type Node } from '../core/store'
 import { zoom } from '../core/zoom'
-import { startDrag } from '../core/drag'
 import { ColorPicker } from './ColorPicker'
+import { PanelGrip, usePanelDrag } from './PanelGrip'
 import { NumberField } from './NumberField'
-import { SpacingControl } from './SpacingControl'
+import { ExpandGroup } from './ExpandGroup'
 import {
   AlignIcon,
+  BlurIcon,
   BorderIcon,
   BorderPaintIcon,
   BucketIcon,
+  CornerIcon,
+  CornersIcon,
   DistributeIcon,
-  GripIcon,
+  EdgeIcon,
+  FlipIcon,
+  ImageIcon,
   NoBorderIcon,
+  OpacityIcon,
+  RotateStepIcon,
+  RotationIcon,
+  ShadowIcon,
+  SpreadIcon,
   StackIcon,
   UngroupIcon,
   WrapIcon,
@@ -55,6 +75,26 @@ import { cx, zoomStable } from './util'
 
 const BAR_HEIGHT = 32
 const COLOR_PANEL_HEIGHT = 220
+
+/**
+ * The order every one of these folds out in: clockwise from the top, which is
+ * the order CSS itself states them in and the order Figma lays them out. Reading
+ * `10 0 10 0` off the bar and typing it into a stylesheet should not require
+ * rearranging it.
+ */
+const SIDES: { side: Side; label: string }[] = [
+  { side: 'top', label: 'top' },
+  { side: 'right', label: 'right' },
+  { side: 'bottom', label: 'bottom' },
+  { side: 'left', label: 'left' },
+]
+
+const CORNERS: { corner: Corner; label: string }[] = [
+  { corner: 'tl', label: 'top left' },
+  { corner: 'tr', label: 'top right' },
+  { corner: 'br', label: 'bottom right' },
+  { corner: 'bl', label: 'bottom left' },
+]
 
 const H_EDGES: { edge: AlignEdge; pos: AlignPos; label: string }[] = [
   { edge: 'left', pos: 'start', label: 'Align left' },
@@ -86,6 +126,12 @@ export function ElementBar({ node }: { node: Node }) {
   const box = readBox(node.el)
   const pad = readSpacing(node.el, 'padding')
   const mar = readSpacing(node.el, 'margin')
+  const radius = readRadius(node.el)
+  const shadow = readShadow(node.el)
+  const position = readPosition(node.el)
+  const expanded = store.get().expanded
+  const unfold = (group: BoxGroup) =>
+    store.set({ expanded: { ...expanded, [group]: !expanded[group] } })
   const hasLayout = info.items.length > 0
   const grouped = isGroup(node.el)
 
@@ -96,25 +142,35 @@ export function ElementBar({ node }: { node: Node }) {
    */
   const act = (run: () => void) => () => {
     history.step('element', node.el, run)
-    store.set({ undoDepth: history.depth() })
+    store.set(history.depths())
     store.touch()
   }
 
   const live = (run: () => void) => {
-    history.begin('colour', node.el)
+    history.begin('edit', node.el)
     run()
     if (!gesture.current) history.commit()
-    store.set({ undoDepth: history.depth() })
+    store.set(history.depths())
     store.touch()
   }
 
+  /**
+   * A scrub is a drag, and gets the same bracket a colour drag does: forty
+   * writes on the way from 0 to 20, one step on the undo stack.
+   */
   const onGesture = (active: boolean) => {
     gesture.current = active
     if (!active) {
       history.commit()
-      store.set({ undoDepth: history.depth() })
+      store.set(history.depths())
     }
   }
+
+  /**
+   * A scrub is a drag, and gets the same bracket a colour drag does: forty
+   * writes on the way from 0 to 20, one step on the undo stack.
+   */
+  const settle = onGesture
 
   /**
    * The bar's size depends on what it is showing — a leaf gets the box controls
@@ -144,22 +200,7 @@ export function ElementBar({ node }: { node: Node }) {
    * screen. The grip parks it wherever you like until you double-click to
    * re-anchor it.
    */
-  const onGrab = (event: ReactPointerEvent) => {
-    const box = barRef.current?.getBoundingClientRect()
-    if (!box) return
-    const grabX = event.clientX - box.left
-    const grabY = event.clientY - box.top
-    startDrag(event.nativeEvent, {
-      cursor: 'grabbing',
-      onMove: (drag) =>
-        store.set({
-          barPos: {
-            left: Math.max(8, Math.min(drag.x - grabX, window.innerWidth - box.width - 8)),
-            top: Math.max(8, Math.min(drag.y - grabY, window.innerHeight - box.height - 8)),
-          },
-        }),
-    })
-  }
+  const grip = usePanelDrag('element', barRef)
 
   /**
    * `left` is placed from the bar's *natural* width, estimated from which
@@ -169,12 +210,11 @@ export function ElementBar({ node }: { node: Node }) {
    * column. With a fixed estimate the bar simply shifts left far enough to have
    * room, and maxWidth handles whatever is left over.
    */
-  const natural = (hasLayout ? 470 : 0) + (grouped ? 32 : 0) + 300
+  const natural = (hasLayout ? 470 : 0) + (grouped ? 32 : 0) + 410
   const anchoredLeft = Math.max(8, Math.min(rect.left, window.innerWidth - natural / scale - 8))
 
-  const pinned = store.get().barPos
-  const top = pinned ? pinned.top : anchoredTop
-  const left = pinned ? pinned.left : anchoredLeft
+  const top = grip.pinned ? grip.pinned.top : anchoredTop
+  const left = grip.pinned ? grip.pinned.left : anchoredLeft
   const dropUp = top > window.innerHeight - COLOR_PANEL_HEIGHT - shownHeight
 
   return (
@@ -193,16 +233,7 @@ export function ElementBar({ node }: { node: Node }) {
         ...zoomStable(zoom(), 'top left'),
       }}
     >
-      <span
-        role="button"
-        aria-label="Move this bar"
-        title="Drag to move · double-click to re-anchor to the selection"
-        onPointerDown={onGrab}
-        onDoubleClick={() => store.set({ barPos: null })}
-        className="grid h-[22px] w-[12px] shrink-0 cursor-grab place-items-center text-ink-soft hover:text-ink"
-      >
-        <GripIcon />
-      </span>
+      <PanelGrip onGrab={grip.onGrab} reset={grip.reset} />
 
       {/* A group has no purpose beyond holding its children, so the way back out
           belongs next to the controls that are the reason it was made. */}
@@ -296,6 +327,35 @@ export function ElementBar({ node }: { node: Node }) {
 
       {/* — the element's own box — */}
 
+      {/**
+       * Exact size, for when the handles can't give it: matching a spec, making
+       * two cards agree to the pixel, or sizing something whose handles are off
+       * screen. The values are what the frame's readout shows — the rendered
+       * box — so typing back the number already displayed changes nothing, which
+       * is the only behaviour that makes the pair trustworthy.
+       *
+       * Each axis is written on its own, so setting a width leaves the height to
+       * the content rather than quietly freezing both.
+       */}
+      <NumberField
+        label="W"
+        value={Math.round(rect.width)}
+        step={1}
+        min={0}
+        title="Width in px — the box as drawn, border included"
+        onChange={(next) => act(() => setSize(node.el, 'width', next))()}
+      />
+      <NumberField
+        label="H"
+        value={Math.round(rect.height)}
+        step={1}
+        min={0}
+        title="Height in px — the box as drawn, border included"
+        onChange={(next) => act(() => setSize(node.el, 'height', next))()}
+      />
+
+      <span className="dm-divider" />
+
       <div className="relative">
         <Toggle
           label="Fill colour"
@@ -319,6 +379,15 @@ export function ElementBar({ node }: { node: Node }) {
           />
         )}
       </div>
+
+      {/* Next to the fill, because both answer "what is inside this box" — one
+          with a colour, one with a picture. */}
+      <Toggle
+        label="Put an image in this box — or paste one straight in with Ctrl/Cmd+V"
+        onClick={() => controller.pickImage()}
+      >
+        <ImageIcon />
+      </Toggle>
 
       <Toggle
         label={box.hasBorder ? 'Hide border' : 'Add border'}
@@ -366,34 +435,370 @@ export function ElementBar({ node }: { node: Node }) {
 
       <span className="dm-divider" />
 
-      <SpacingControl
+      <SpacingGroup
         kind="padding"
         info={pad}
-        dropUp={dropUp}
-        onSide={(side, value) => act(() => setSide(node.el, 'padding', side, value))()}
-        onAll={(value) => act(() => setSpacing(node.el, 'padding', value))()}
-        onNudge={(delta) => act(() => nudgeSpacing(node.el, 'padding', delta))()}
-      />
-      <SpacingControl
-        kind="margin"
-        info={mar}
-        dropUp={dropUp}
-        onSide={(side, value) => act(() => setSide(node.el, 'margin', side, value))()}
-        onAll={(value) => act(() => setSpacing(node.el, 'margin', value))()}
-        onNudge={(delta) => act(() => nudgeSpacing(node.el, 'margin', delta))()}
+        open={Boolean(expanded.padding)}
+        el={node.el}
+        onUnfold={() => unfold('padding')}
+        live={live}
+        settle={settle}
       />
 
       <span className="dm-divider" />
 
-      <NumberField
-        label="radius"
-        value={box.radius}
-        step={2}
-        min={0}
-        title="Corner radius"
-        onChange={(next) => act(() => setRadius(node.el, next))()}
+      <SpacingGroup
+        kind="margin"
+        info={mar}
+        open={Boolean(expanded.margin)}
+        el={node.el}
+        onUnfold={() => unfold('margin')}
+        live={live}
+        settle={settle}
       />
+
+      <span className="dm-divider" />
+
+      {/* — corners — */}
+      <Toggle
+        label={
+          expanded.radius ? 'Fold the corners back into one radius' : 'Set each corner on its own'
+        }
+        active={Boolean(expanded.radius)}
+        onClick={() => unfold('radius')}
+      >
+        <CornersIcon />
+      </Toggle>
+      {!expanded.radius && (
+        <NumberField
+          compact
+          label="corner radius"
+          title="Corner radius — drag to scrub, double-click to type"
+          icon={<CornerIcon corner="tl" />}
+          value={radius.value}
+          mixed={!radius.uniform}
+          step={2}
+          min={0}
+          onGesture={settle}
+          onChange={(next) => live(() => setRadius(node.el, next))}
+        />
+      )}
+      <ExpandGroup open={Boolean(expanded.radius)}>
+        {CORNERS.map(({ corner, label }) => (
+          <NumberField
+            key={corner}
+            compact
+            label={`${label} radius`}
+            title={`${label} corner radius`}
+            icon={<CornerIcon corner={corner} />}
+            value={radius.corners[corner]}
+            step={2}
+            min={0}
+            onGesture={settle}
+            onChange={(next) => live(() => setCorner(node.el, corner, next))}
+          />
+        ))}
+      </ExpandGroup>
+
+      <span className="dm-divider" />
+
+      {/* — shadow — */}
+      <Toggle
+        label={shadow.on ? 'Shadow — click to open its settings' : 'Add a drop shadow'}
+        active={Boolean(expanded.shadow)}
+        onClick={() => {
+          // The first click on a box with no shadow gives it one, because an
+          // unfolded row of zeroes that paints nothing looks broken. After that
+          // the button is only the door to the settings.
+          if (!shadow.on) act(() => setShadow(node.el, DEFAULT_SHADOW))()
+          unfold('shadow')
+        }}
+      >
+        <ShadowIcon />
+      </Toggle>
+      <ExpandGroup open={Boolean(expanded.shadow)}>
+        <ShadowFields
+          shadow={shadow}
+          el={node.el}
+          live={live}
+          settle={settle}
+          act={act}
+          dropUp={dropUp}
+          onGesture={onGesture}
+        />
+      </ExpandGroup>
+
+      <span className="dm-divider" />
+
+      {/* — position: no folded state, because there is nothing to summarise.
+          Four unrelated verbs, not four parts of one number. */}
+      <NumberField
+        compact
+        label="rotation"
+        title="Rotation — drag to scrub, double-click to type"
+        icon={<RotationIcon />}
+        value={position.rotation}
+        step={15}
+        min={-Infinity}
+        suffix="°"
+        onGesture={settle}
+        onChange={(next) => live(() => setRotation(node.el, next))}
+      />
+      <Toggle
+        label="Turn a quarter clockwise"
+        onClick={act(() => setRotation(node.el, position.rotation + 90))}
+      >
+        <RotateStepIcon />
+      </Toggle>
+      <Toggle
+        label="Flip horizontally"
+        active={position.flipX}
+        onClick={act(() => setFlip(node.el, 'x', !position.flipX))}
+      >
+        <FlipIcon axis="row" />
+      </Toggle>
+      <Toggle
+        label="Flip vertically"
+        active={position.flipY}
+        onClick={act(() => setFlip(node.el, 'y', !position.flipY))}
+      >
+        <FlipIcon axis="column" />
+      </Toggle>
     </div>
+  )
+}
+
+/**
+ * Padding or margin: one name over four numbers.
+ *
+ * Folded, it shows the two numbers that describe almost every box anyone
+ * actually builds — the vertical pair and the horizontal pair — because that is
+ * how the values were written in the first place (`padding: 12px 24px`), and a
+ * single number could only ever be a lie about three of the four sides.
+ * Unfolded, each edge is its own field and nothing has to be inferred.
+ *
+ * Editing a *pair* writes both of its sides. That is the whole reason the folded
+ * form is honest where one summary number was not: the field says "these two",
+ * writes exactly those two, and leaves the other pair alone.
+ */
+function SpacingGroup({
+  kind,
+  info,
+  open,
+  el,
+  onUnfold,
+  live,
+  settle,
+}: {
+  kind: SpacingKind
+  info: SpacingInfo
+  open: boolean
+  el: HTMLElement
+  onUnfold: () => void
+  live: (run: () => void) => void
+  settle: (active: boolean) => void
+}) {
+  const floor = kind === 'padding' ? 0 : -Infinity
+  const name = kind === 'padding' ? 'padding' : 'margin'
+  /**
+   * Green for padding, orange for margin — the same two colours the bands on the
+   * canvas are drawn in. Without this the two groups are the identical four
+   * marks twice over, and the only way to tell which is which is to count along
+   * the bar. The old control said "pad" and "mar" in words, which cost eight
+   * characters of a bar that no longer has them to spare; the colour was already
+   * doing this job everywhere else in the product.
+   */
+  const tone = kind === 'padding' ? COLORS.paddingLine : COLORS.marginLine
+  const tint = (mark: ReactNode) => <span style={{ color: tone }}>{mark}</span>
+  const pair = (a: Side, b: Side) => (value: number) =>
+    live(() => {
+      setSide(el, kind, a, value)
+      setSide(el, kind, b, value)
+    })
+
+  const vertical = Math.abs(info.sides.top - info.sides.bottom) < 0.5
+  const horizontal = Math.abs(info.sides.left - info.sides.right) < 0.5
+
+  return (
+    <>
+      <Toggle
+        label={open ? `Fold ${name} back into pairs` : `Set each ${name} edge on its own`}
+        active={open}
+        onClick={onUnfold}
+      >
+        {tint(<CornersIcon />)}
+      </Toggle>
+
+      {!open && (
+        <>
+          <NumberField
+            compact
+            label={`horizontal ${name}`}
+            title={`Left and right ${name}`}
+            icon={tint(<EdgeIcon edges={['left', 'right']} />)}
+            value={info.sides.left}
+            mixed={!horizontal}
+            min={floor}
+            onGesture={settle}
+            onChange={pair('left', 'right')}
+          />
+          <NumberField
+            compact
+            label={`vertical ${name}`}
+            title={`Top and bottom ${name}`}
+            icon={tint(<EdgeIcon edges={['top', 'bottom']} />)}
+            value={info.sides.top}
+            mixed={!vertical}
+            min={floor}
+            onGesture={settle}
+            onChange={pair('top', 'bottom')}
+          />
+        </>
+      )}
+
+      <ExpandGroup open={open}>
+        {SIDES.map(({ side, label }) => (
+          <NumberField
+            key={side}
+            compact
+            label={`${label} ${name}`}
+            title={`${label} ${name}`}
+            icon={tint(<EdgeIcon edges={[side]} />)}
+            value={info.sides[side]}
+            min={floor}
+            onGesture={settle}
+            onChange={(next) => live(() => setSide(el, kind, side, next))}
+          />
+        ))}
+      </ExpandGroup>
+    </>
+  )
+}
+
+const Letter = ({ children }: { children: string }) => (
+  <span className="w-[11px] text-center text-[10px] font-semibold">{children}</span>
+)
+
+/** X, Y, blur, spread, colour and opacity — the six numbers a shadow is. */
+function ShadowFields({
+  shadow,
+  el,
+  live,
+  settle,
+  act,
+  dropUp,
+  onGesture,
+}: {
+  shadow: ShadowInfo
+  el: HTMLElement
+  live: (run: () => void) => void
+  settle: (active: boolean) => void
+  act: (run: () => void) => () => void
+  dropUp: boolean
+  onGesture: (active: boolean) => void
+}) {
+  const [picking, setPicking] = useState(false)
+  // Every field writes the whole declaration — `box-shadow` has no longhands, so
+  // there is nothing to edit in isolation even in principle.
+  const write = (patch: Partial<ShadowInfo>) =>
+    live(() => setShadow(el, { ...shadow, ...patch, on: true }))
+
+  return (
+    <>
+      {/* The two axes are the one pair in the bar with no picture worth drawing:
+          X and Y already *are* the notation, and a mark meaning "horizontal
+          offset" would be a worse version of the letter. The accessible name
+          stays the long form, which is what a screen reader needs. */}
+      <NumberField
+        compact
+        label="shadow x"
+        title="Horizontal offset"
+        icon={<Letter>X</Letter>}
+        value={shadow.x}
+        min={-Infinity}
+        onGesture={settle}
+        onChange={(x) => write({ x })}
+      />
+      <NumberField
+        compact
+        label="shadow y"
+        title="Vertical offset"
+        icon={<Letter>Y</Letter>}
+        value={shadow.y}
+        min={-Infinity}
+        onGesture={settle}
+        onChange={(y) => write({ y })}
+      />
+      <NumberField
+        compact
+        label="blur"
+        title="Blur"
+        icon={<BlurIcon />}
+        value={shadow.blur}
+        min={0}
+        onGesture={settle}
+        onChange={(blur) => write({ blur })}
+      />
+      <NumberField
+        compact
+        label="spread"
+        title="Spread"
+        icon={<SpreadIcon />}
+        value={shadow.spread}
+        min={-Infinity}
+        onGesture={settle}
+        onChange={(spread) => write({ spread })}
+      />
+
+      <div className="relative">
+        <Toggle label="Shadow colour" active={picking} wide onClick={() => setPicking(!picking)}>
+          <ColorGlyph tint={shadow.color}>
+            <ShadowIcon />
+          </ColorGlyph>
+        </Toggle>
+        {picking && (
+          <ColorPicker
+            /**
+             * The slider and the `%` field beside it are the same number seen
+             * twice, deliberately: a shadow's opacity is part of its colour, and
+             * a picker that showed a transparency control which did nothing —
+             * because the real one lived in the bar — would be the worse of the
+             * two options by a distance.
+             */
+            value={cssColor(hexToRgb(shadow.color), shadow.opacity / 100)}
+            showContrast={false}
+            dropUp={dropUp}
+            onClose={() => setPicking(false)}
+            onGesture={onGesture}
+            onChange={(css) =>
+              live(() => {
+                const picked = parseColor(css)
+                setShadow(el, {
+                  ...shadow,
+                  on: true,
+                  color: picked ? rgbToHex(picked.rgb) : shadow.color,
+                  opacity: Math.round((picked?.alpha ?? 1) * 100),
+                })
+              })
+            }
+            onReset={act(() => setShadow(el, { ...shadow, color: '#000000', on: true }))}
+          />
+        )}
+      </div>
+
+      <NumberField
+        compact
+        label="shadow opacity"
+        title="Shadow opacity"
+        icon={<OpacityIcon />}
+        value={shadow.opacity}
+        min={0}
+        step={5}
+        suffix="%"
+        onGesture={settle}
+        onChange={(opacity) => write({ opacity })}
+      />
+    </>
   )
 }
 
@@ -414,7 +819,10 @@ function ColorGlyph({ tint, children }: { tint: string | null; children: ReactNo
         className="block h-[4px] w-[15px] rounded-[1px]"
         style={
           tint
-            ? { background: tint, boxShadow: 'inset 0 0 0 0.5px rgba(11,11,12,.25)' }
+            ? {
+                background: tint,
+                boxShadow: 'inset 0 0 0 0.5px rgba(11,11,12,.25)',
+              }
             : {
                 backgroundImage:
                   'linear-gradient(45deg, transparent 42%, rgba(11,11,12,.5) 42%, rgba(11,11,12,.5) 58%, transparent 58%)',
@@ -425,8 +833,6 @@ function ColorGlyph({ tint, children }: { tint: string | null; children: ReactNo
     </span>
   )
 }
-
-
 
 function Toggle({
   label,
@@ -454,18 +860,12 @@ function Toggle({
         // The colour buttons carry a swatch under their glyph, so they get two
         // more pixels to put it in.
         wide ? 'w-[26px]' : 'w-[24px]',
-        active ? 'bg-[color:var(--color-select)] text-paper' : 'bg-transparent text-ink hover:bg-ink/5',
+        active
+          ? 'bg-[color:var(--color-select)] text-paper'
+          : 'bg-transparent text-ink hover:bg-ink/5',
       )}
     >
       {children}
     </button>
   )
 }
-
-
-
-
-
-
-
-

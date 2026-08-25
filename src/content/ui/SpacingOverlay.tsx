@@ -81,7 +81,7 @@ export function SpacingOverlay({ node, readOnly = false }: { node: Node; readOnl
       onMove: (drag) => applySpacing(el, start, kind, edge, drag),
       onEnd: () => {
         history.commit()
-        store.set({ interaction: 'idle', undoDepth: history.depth() })
+        store.set({ interaction: 'idle', ...history.depths() })
       },
     })
   }

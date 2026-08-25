@@ -140,3 +140,69 @@
   border-radius: 12px;
   box-shadow: var(--shadow-panel);
 }
+
+/*
+ * The shutter.
+ *
+ * A real flash is over before you have finished registering it, so this is too:
+ * white all the way up in two frames, then out. The point is not to illuminate
+ * anything — it is to mark the instant the picture was taken, which on a
+ * full-page capture is the one moment the user cannot otherwise see, because our
+ * chrome is hidden while the page scrolls itself past the camera.
+ *
+ * Two layers in one: the white blink, and a hairline of the selection blue
+ * closing in from the edges like a viewfinder shutting. Composited transform and
+ * opacity only, so it costs nothing on a page that is already busy.
+ */
+@keyframes dm-flash {
+  0% {
+    opacity: 0;
+  }
+  12% {
+    opacity: 0.92;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+@keyframes dm-flash-frame {
+  0% {
+    opacity: 0;
+    transform: scale(1.04);
+  }
+  20% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(0.985);
+  }
+}
+
+.dm-flash {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background: #fff;
+  animation: dm-flash 460ms cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
+}
+
+.dm-flash-frame {
+  position: fixed;
+  inset: 10px;
+  pointer-events: none;
+  border: 2px solid var(--color-select);
+  border-radius: 10px;
+  animation: dm-flash-frame 460ms cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
+}
+
+/* A flash is exactly the kind of thing this setting exists to suppress. */
+@media (prefers-reduced-motion: reduce) {
+  .dm-flash,
+  .dm-flash-frame {
+    animation-duration: 1ms;
+    opacity: 0;
+  }
+}

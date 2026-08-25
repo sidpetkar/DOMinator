@@ -6,6 +6,7 @@ import * as history from '../core/history'
 import { beginMove } from '../core/move'
 import { store, type Node } from '../core/store'
 import { applyResize, HANDLE_CURSOR, HANDLES, type HandleId } from '../core/transforms'
+import { DimensionPill } from './DimensionPill'
 import { SelectionGripIcon } from './icons'
 import { rectStyle } from './util'
 
@@ -38,7 +39,7 @@ export function SelectionFrame({ node }: { node: Node }) {
       onMove: (drag) => applyResize(el, start, handle, drag),
       onEnd: () => {
         history.commit()
-        store.set({ interaction: 'idle', undoDepth: history.depth() })
+        store.set({ interaction: 'idle', ...history.depths() })
       },
     })
   }
@@ -59,9 +60,7 @@ export function SelectionFrame({ node }: { node: Node }) {
         <span className="truncate">{isGroup(node.el) ? 'group' : describe(node.el)}</span>
       </span>
 
-      <span className="dm-panel absolute -bottom-[26px] left-1/2 -translate-x-1/2 px-1.5 py-[2px] text-[10px] font-medium text-ink-soft">
-        {Math.round(rect.width)} × {Math.round(rect.height)}
-      </span>
+      <DimensionPill rect={rect} />
 
       {/* 6-dot grip. Dragging the element's body does the same thing; the grip
           exists for elements too small or too crowded to grab by the body. */}
@@ -69,7 +68,7 @@ export function SelectionFrame({ node }: { node: Node }) {
         type="button"
         title="Drag to move this element into another container"
         onPointerDown={(event) => beginMove(node.el, event.nativeEvent, true)}
-        className="dm-interactive absolute -top-[20px] -right-[1px] grid h-[18px] w-[18px] cursor-grab place-items-center rounded-[4px] border-0 bg-[color:var(--color-select)] p-0"
+        className="dm-interactive absolute -top-[20px] -right-[1px] grid h-[18px] w-[18px] cursor-grab place-items-center rounded-[4px] border-0 bg-[color:var(--color-select)] p-0 text-paper"
       >
         <SelectionGripIcon />
       </button>

@@ -301,6 +301,20 @@
             g.fillStyle = `rgb(${docY % 256}, ${(docY >> 8) % 256}, 100)`
             g.fillRect(0, y, innerWidth, 1)
           }
+          // Say so, in the picture. The gradient alone is indistinguishable from
+          // a capture that went wrong, and a stitched shot of it looks exactly
+          // like a bug report — so every tile states what it is and which slice
+          // of the document it came from. A correct stitch reads as one
+          // continuous ruler down the image; a broken one repeats or skips.
+          g.font = '600 14px ui-monospace, monospace'
+          g.textBaseline = 'top'
+          for (let y = 0; y < innerHeight; y += 100) {
+            const docY = Math.round(scrollY) + y
+            g.fillStyle = 'rgba(0, 0, 0, 0.55)'
+            g.fillRect(8, y + 8, 470, 22)
+            g.fillStyle = '#fff'
+            g.fillText(`HARNESS TEST PATTERN — not a real capture · doc y=${docY}`, 14, y + 12)
+          }
           return Promise.resolve({ ok: true, data: canvas.toDataURL('image/png') })
         }
         if (message?.type === 'fonts:list') return fetch('/gf/list').then((r) => r.json())

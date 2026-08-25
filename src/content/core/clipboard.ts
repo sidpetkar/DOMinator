@@ -88,10 +88,15 @@ export function copy(elements: HTMLElement[]): { label: string; shareError?: str
 }
 
 /**
- * Drops this tab's clone. The shared shelf is left alone on purpose: copying in
- * one tab and then closing the editor there before pasting in another is the
- * whole point, so its lifetime belongs to the browser session, not to a tab's
- * editor being open.
+ * Drops this tab's clone.
+ *
+ * Not called when the editor closes, which it used to be. The shared shelf
+ * outlives a closed editor by design, so clearing only the local half meant a
+ * toggle off and on silently swapped a lossless clone for its serialised twin —
+ * the same element pasted differently depending on whether you had happened to
+ * press Ctrl+Shift+E in between, and pasted nothing at all if it had been too
+ * large to serialise. Both halves now have the same lifetime: the browser
+ * session, which is the lifetime of the thing the user thinks they copied.
  */
 export function clear(): void {
   stored = null
@@ -132,7 +137,7 @@ const TEXT_TAGS = new Set([
   'CODE', 'PRE', 'BLOCKQUOTE', 'CAPTION', 'SUMMARY',
 ])
 
-const isPasteContainer = (el: HTMLElement): boolean =>
+export const isPasteContainer = (el: HTMLElement): boolean =>
   canContainChildren(el) && !TEXT_TAGS.has(el.tagName.toUpperCase())
 
 /**
@@ -170,7 +175,7 @@ export function paste(target: HTMLElement): PasteResult | null {
     added.push(node)
   }
 
-  history.push({ label: 'paste', undo: () => added.forEach((node) => node.remove()) })
+  history.recordInsert('paste', added)
   const first = added[0]!
   return { node: first, container: into ? target : (first.parentElement ?? target) }
 }
@@ -180,6 +185,6 @@ export function duplicate(el: HTMLElement): HTMLElement {
   const node = el.cloneNode(true) as HTMLElement
   sanitise(node)
   el.after(node)
-  history.push({ label: 'duplicate', undo: () => node.remove() })
+  history.recordInsert('duplicate', [node])
   return node
 }

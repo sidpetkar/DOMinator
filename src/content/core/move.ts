@@ -37,7 +37,7 @@ export function beginMove(el: HTMLElement, event: PointerEvent, immediate = fals
         history.recordMove(el)
         commitDrop(el, drop)
       }
-      store.set({ drop: null, interaction: 'idle', undoDepth: history.depth() })
+      store.set({ drop: null, interaction: 'idle', ...history.depths() })
       store.remeasure()
     },
   })

@@ -42,22 +42,33 @@ export function revert(el: HTMLElement): void {
   forget(el)
 }
 
-/** Stops tracking an element — used after an undo restores it to pristine. */
+/** Stops tracking an element entirely — used when its changes are reverted. */
 export function forget(el: HTMLElement): void {
   pristine.delete(el)
+  unedit(el)
+}
+
+/**
+ * Drops an element from the edited set while *keeping* what it originally
+ * looked like. Undo goes here rather than to forget(): a redo puts the change
+ * back, and without the pristine value it would have nothing to diff against —
+ * the element would go on carrying our styles without counting as edited, so
+ * Reset would leave it behind.
+ */
+function unedit(el: HTMLElement): void {
   edited.delete(el)
   el.removeAttribute(EDITED_ATTR)
 }
 
 /**
- * Restores a captured style attribute (undo). If the element is back to how the
- * page shipped it, it stops counting as edited — otherwise the Reset badge would
- * keep counting elements that no longer carry any of our changes.
+ * Restores a captured style attribute (undo or redo). If the element is back to
+ * how the page shipped it, it stops counting as edited — otherwise the Reset
+ * badge would keep counting elements that no longer carry any of our changes.
  */
 export function restoreStyle(el: HTMLElement, value: string | null): void {
   const original = pristine.get(el)
   applyAttr(el, value)
-  if (original === undefined || value === (original ?? null)) forget(el)
+  if (original === undefined || value === (original ?? null)) unedit(el)
   else {
     el.setAttribute(EDITED_ATTR, '')
     edited.add(el)

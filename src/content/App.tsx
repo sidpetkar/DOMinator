@@ -29,7 +29,7 @@ export function App() {
   const snapshot = useSyncExternalStore(store.subscribe, store.get)
   if (!snapshot.active) return null
 
-  const { hovered, selected, extras, editing, interaction, drop, shot, toast, preview, lens } =
+  const { hovered, selected, extras, editing, interaction, drop, shot, toast, preview, lens, flash } =
     snapshot
 
   // Screenshot mode owns the screen: the editing chrome would only be
@@ -78,9 +78,15 @@ export function App() {
               extraCount={extras.length}
             />
           ))}
-          {/* The one action whose subject is the set rather than one member. */}
-          <GroupPrompt nodes={[selected, ...extras]} />
         </>
+      )}
+
+      {/* The actions whose subject is the set rather than one member. Outside
+          the chrome gate above for the same reason the element bar is: it
+          carries a colour picker, and a preview must not unmount the panel the
+          colour is being dragged in. */}
+      {selected && comparing && !editing && !moving && (
+        <GroupPrompt nodes={[selected, ...extras]} />
       )}
 
       {selected && showChrome && !comparing && (
@@ -107,7 +113,23 @@ export function App() {
         </>
       )}
       <StatusBar snapshot={snapshot} />
+      {/* Above everything, including the status bar: a shutter that something
+          else painted over would not read as one. */}
+      {flash && <ShotFlash />}
       {toast && <Toast message={toast} />}
+    </>
+  )
+}
+
+/**
+ * One frame of white and a closing viewfinder, after a capture lands. Mounted
+ * only while it plays, so each shot gets the animation from the start.
+ */
+function ShotFlash() {
+  return (
+    <>
+      <div className="dm-flash" />
+      <div className="dm-flash-frame" />
     </>
   )
 }

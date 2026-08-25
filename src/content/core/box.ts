@@ -1,11 +1,19 @@
-import { parseColor, rgbToHex } from './color'
+import { cssColor, parseColor } from './color'
 import { px, setStyle } from './styles'
 
 /** The light grey a border starts at when you switch one on. */
 export const DEFAULT_BORDER_COLOR = '#c7c7c7'
 
 export interface BoxInfo {
-  /** Hex, or null when the element paints no background of its own. */
+  /**
+   * The fill as CSS — hex while it is opaque, `rgba()` once it is not, and null
+   * when the element paints no background of its own.
+   *
+   * Carrying the alpha rather than flattening it to hex is what lets the picker
+   * open on the transparency the page already has: reading a half-opaque scrim
+   * as solid, then writing that back the moment anything else in the panel was
+   * touched, would quietly make it opaque.
+   */
   background: string | null
   hasBorder: boolean
   borderColor: string
@@ -34,9 +42,11 @@ export function readBox(el: HTMLElement): BoxInfo {
   return {
     // `transparent` and `rgba(…, 0)` both mean "no fill of its own", which the
     // swatch shows as empty rather than as black.
-    background: background && background.alpha > 0 ? rgbToHex(background.rgb) : null,
+    background:
+      background && background.alpha > 0 ? cssColor(background.rgb, background.alpha) : null,
     hasBorder,
-    borderColor: chosen && border ? rgbToHex(border.rgb) : DEFAULT_BORDER_COLOR,
+    borderColor:
+      chosen && border ? cssColor(border.rgb, border.alpha) : DEFAULT_BORDER_COLOR,
     borderWidth: chosenWidth && width > 0 ? width : 1,
     radius: Number.parseFloat(style.borderTopLeftRadius) || 0,
   }
@@ -44,6 +54,24 @@ export function readBox(el: HTMLElement): BoxInfo {
 
 export const setBackground = (el: HTMLElement, hex: string): void =>
   setStyle(el, 'background-color', hex)
+
+/**
+ * An exact size, typed rather than dragged.
+ *
+ * The same three writes a resize handle makes (see applyResize), for the same
+ * reasons: `border-box` so the number means the box the user is looking at
+ * rather than the box plus its padding and border, and `flex: none` so a flex
+ * or grid parent doesn't immediately stretch the element back off the value it
+ * was just given. Without those two a typed 300 lands as something other than
+ * 300 often enough to look broken.
+ *
+ * One axis at a time, so setting a width leaves the height to the content.
+ */
+export function setSize(el: HTMLElement, axis: 'width' | 'height', value: number): void {
+  setStyle(el, axis, px(Math.max(0, value)))
+  setStyle(el, 'box-sizing', 'border-box')
+  setStyle(el, 'flex', 'none')
+}
 
 /**
  * Switching a border on has to write all three properties: a page that never
@@ -71,6 +99,40 @@ export function setBorderWidth(el: HTMLElement, width: number): void {
 export const setRadius = (el: HTMLElement, radius: number): void =>
   setStyle(el, 'border-radius', px(Math.max(0, radius)))
 
+export type Corner = 'tl' | 'tr' | 'br' | 'bl'
+
+/** CSS calls them by the two edges that meet there. */
+const CORNER_PROP: Record<Corner, string> = {
+  tl: 'border-top-left-radius',
+  tr: 'border-top-right-radius',
+  br: 'border-bottom-right-radius',
+  bl: 'border-bottom-left-radius',
+}
+
+export interface RadiusInfo {
+  /** True when all four corners agree — the only time one number is honest. */
+  uniform: boolean
+  /** The shared value when uniform; the top-left otherwise. */
+  value: number
+  corners: Record<Corner, number>
+}
+
+export function readRadius(el: HTMLElement): RadiusInfo {
+  const style = window.getComputedStyle(el)
+  const read = (corner: Corner): number =>
+    // An elliptical radius computes as "12px 20px"; the first number is the one
+    // a single field can edit without silently discarding the second.
+    Number.parseFloat(style.getPropertyValue(CORNER_PROP[corner])) || 0
+  const corners = { tl: read('tl'), tr: read('tr'), br: read('br'), bl: read('bl') }
+  const uniform = (['tr', 'br', 'bl'] as const).every(
+    (corner) => Math.abs(corners[corner] - corners.tl) < 0.5,
+  )
+  return { uniform, value: corners.tl, corners }
+}
+
+export const setCorner = (el: HTMLElement, corner: Corner, value: number): void =>
+  setStyle(el, CORNER_PROP[corner], px(Math.max(0, value)))
+
 export type SpacingKind = 'padding' | 'margin'
 
 export interface SpacingInfo {
@@ -80,8 +142,6 @@ export interface SpacingInfo {
   value: number
   sides: { top: number; right: number; bottom: number; left: number }
 }
-
-const SIDES = ['top', 'right', 'bottom', 'left'] as const
 
 export function readSpacing(el: HTMLElement, kind: SpacingKind): SpacingInfo {
   const style = window.getComputedStyle(el)
@@ -98,21 +158,6 @@ export function readSpacing(el: HTMLElement, kind: SpacingKind): SpacingInfo {
   return { uniform, value: sides.top, sides }
 }
 
-/**
- * Nudging adds to every side, keeping the shape.
- *
- * Writing the shorthand instead would flatten an asymmetric box the moment you
- * pressed `+` once — a card with `12px 24px` padding would silently become
- * `16px` all round. A relative step preserves the difference the page's designer
- * put there, which is almost always what a nudge is meant to do.
- */
-export function nudgeSpacing(el: HTMLElement, kind: SpacingKind, delta: number): void {
-  const { sides } = readSpacing(el, kind)
-  const floor = kind === 'padding' ? 0 : -Infinity
-  for (const side of SIDES) {
-    setStyle(el, `${kind}-${side}`, px(Math.max(floor, sides[side] + delta)))
-  }
-}
 
 export type Side = 'top' | 'right' | 'bottom' | 'left'
 
@@ -125,26 +170,4 @@ export const setSide = (
 ): void =>
   setStyle(el, `${kind}-${side}`, px(kind === 'padding' ? Math.max(0, value) : value))
 
-/**
- * How the bar labels a four-sided quantity in the width of a few characters.
- *
- * `20` when every side agrees, `24·0` for the very common vertical/horizontal
- * pair, and `–` only when all four genuinely differ. Collapsing everything to
- * one number is what made the field look stuck; collapsing nothing would need
- * four boxes in a bar that has no room for them.
- */
-export function summarise(info: SpacingInfo): { text: string; mixed: boolean } {
-  const { top, right, bottom, left } = info.sides
-  const r = (n: number) => Math.round(n)
-  if (info.uniform) return { text: String(r(top)), mixed: false }
-  if (Math.abs(top - bottom) < 0.5 && Math.abs(left - right) < 0.5) {
-    return { text: `${r(top)}·${r(left)}`, mixed: false }
-  }
-  return { text: '–', mixed: true }
-}
 
-/** Typing a number is unambiguous: make every side exactly that. */
-export function setSpacing(el: HTMLElement, kind: SpacingKind, value: number): void {
-  const floor = kind === 'padding' ? 0 : -Infinity
-  setStyle(el, kind, px(Math.max(floor, value)))
-}

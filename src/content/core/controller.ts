@@ -1,16 +1,19 @@
+import { OWN_NODE_ATTR } from '@/shared/constants'
 import { auditAlt, auditAria, auditContrast, auditTabOrder } from './audit'
 import * as clipboard from './clipboard'
 import { consumedByDrag } from './drag'
 import { describe } from './geometry'
 import * as history from './history'
 import { commitShift, findShift } from './reorder'
-import { editedCount, revertAll, setStyle } from './styles'
+import { setBackground } from './box'
+import { clearStyle, editedCount, revertAll, setStyle } from './styles'
 import { setXray } from './xray'
 import { watchZoom } from './zoom'
 import * as group from './group'
 import { deepestAt, documentOrder, isOwnNode, isTargetable, resolveTarget } from './picker'
 import { beginMove } from './move'
-import { captureRegion, type ShotRect } from './screenshot'
+import { imageIn, insertImage, isImageFile, readImage, tooBig } from './images'
+import { captureRegion, fullPage, type ShotOutcome, type ShotRect } from './screenshot'
 import { nodeOf, store, type Lens, type LensKind } from './store'
 import { clearSelection, selectAll } from './textEdit'
 
@@ -60,6 +63,42 @@ const ARROWS: Record<string, -1 | 1 | undefined> = {
   ArrowDown: 1,
 }
 
+/**
+ * Everything else the page could act on while the editor is up.
+ *
+ * Preventing `click` alone freezes links and buttons that behave the way the
+ * platform intends, and misses every page that doesn't: a menu that opens on
+ * `mousedown`, a carousel that advances on `mouseup`, a router that navigates
+ * from a `touchend`, a lightbox on `contextmenu`, a form that submits from a
+ * `change`. Those are the ones behind "sometimes it just navigates" — and a
+ * tool whose whole premise is that you can click a link to get its box has to
+ * mean that on every page, not on the well-behaved ones.
+ *
+ * These are all swallowed outright. The ones the editor actually reads —
+ * pointermove, pointerdown, click, dblclick, keydown — have handlers of their
+ * own above and are not in this list.
+ *
+ * Scroll and wheel are deliberately absent. Freezing the page means freezing
+ * what it *does*, not pinning it in place: you have to be able to scroll down
+ * to the thing you want to edit.
+ */
+const FROZEN = [
+  'mousedown',
+  'mouseup',
+  'auxclick',
+  'contextmenu',
+  'submit',
+  'reset',
+  'change',
+  'input',
+  'beforeinput',
+  'keyup',
+  'keypress',
+  'touchend',
+  'dragstart',
+  'drop',
+] as const
+
 class Controller {
   private tracking = 0
   private stopZoomWatch: (() => void) | null = null
@@ -76,10 +115,10 @@ class Controller {
     window.addEventListener('pointermove', this.onPointerMove, opts)
     window.addEventListener('pointerdown', this.onPointerDown, opts)
     window.addEventListener('click', this.onClick, opts)
-    window.addEventListener('auxclick', this.swallow, opts)
-    window.addEventListener('submit', this.swallow, opts)
     window.addEventListener('dblclick', this.onDoubleClick, opts)
     window.addEventListener('keydown', this.onKeyDown, opts)
+    window.addEventListener('paste', this.onPaste, opts)
+    for (const type of FROZEN) window.addEventListener(type, this.freeze, opts)
     window.addEventListener('scroll', this.onViewportChange, { capture: true, passive: true })
     window.addEventListener('resize', this.onViewportChange, { passive: true })
     this.startTracking()
@@ -95,10 +134,10 @@ class Controller {
     window.removeEventListener('pointermove', this.onPointerMove, opts)
     window.removeEventListener('pointerdown', this.onPointerDown, opts)
     window.removeEventListener('click', this.onClick, opts)
-    window.removeEventListener('auxclick', this.swallow, opts)
-    window.removeEventListener('submit', this.swallow, opts)
     window.removeEventListener('dblclick', this.onDoubleClick, opts)
     window.removeEventListener('keydown', this.onKeyDown, opts)
+    window.removeEventListener('paste', this.onPaste, opts)
+    for (const type of FROZEN) window.removeEventListener(type, this.freeze, opts)
     window.removeEventListener('scroll', this.onViewportChange, opts)
     window.removeEventListener('resize', this.onViewportChange)
     this.stopTracking()
@@ -110,7 +149,6 @@ class Controller {
     setXray(false)
     this.stopLensWatch()
     history.clear()
-    clipboard.clear()
     store.reset()
   }
 
@@ -123,8 +161,50 @@ class Controller {
   reset(): void {
     revertAll()
     history.clear()
-    store.set({ undoDepth: 0 })
+    store.set(history.depths())
     store.remeasure()
+  }
+
+  /**
+   * Esc — everything down, nothing selected. The editor stays loaded and the
+   * page stays frozen, so it reads as a pause rather than an exit: hover
+   * outlines, the selection and its chrome, a half-finished text edit, an
+   * accessibility scrim, X-ray, an armed screenshot — all off in one keystroke.
+   *
+   * One press rather than a walk back up the stack. Escape is the key you reach
+   * for when the screen has too much on it, and having to press it four times to
+   * clear four different things is the opposite of what that reflex expects.
+   *
+   * Returns whether it actually did anything, so a second press can mean "then
+   * close the tool" without ever being ambiguous about which one it was.
+   */
+  standDown(): boolean {
+    const { editing, selected, extras, hovered, xray, lens, shot, adaOpen, shotOpen } = store.get()
+    const busy = Boolean(
+      editing || selected || extras.length || hovered || xray || lens || shot || adaOpen || shotOpen,
+    )
+    if (!busy) return false
+
+    this.stopEditing()
+    if (xray) setXray(false)
+    if (lens) this.stopLensWatch()
+    // The pending half of a drag would otherwise land on the next thing edited.
+    history.commit()
+    store.set({
+      selected: null,
+      extras: [],
+      hovered: null,
+      xray: false,
+      lens: null,
+      adaOpen: false,
+      shotOpen: false,
+      shot: null,
+      interaction: 'idle',
+      drop: null,
+      preview: false,
+      ...history.depths(),
+    })
+    return true
   }
 
   state(): { active: boolean; editedCount: number } {
@@ -220,16 +300,31 @@ class Controller {
 
   /** Drops the last change. Ctrl/Cmd+Z, or the status bar button. */
   undo(): void {
+    // An unfinished gesture is still sitting in the buffer — close it first, or
+    // Ctrl+Z would skip past the change the user is looking at.
+    history.commit()
     if (!history.undo()) return
-    store.set({ undoDepth: history.depth() })
+    store.set(history.depths())
     store.remeasure()
   }
 
-  /** Arms screenshot mode: dim the page and wait for a region to be dragged. */
+  /** Puts back what undo took. Ctrl/Cmd+Shift+Z (or Ctrl+Y), or the button. */
+  redo(): void {
+    if (!history.redo()) return
+    store.set(history.depths())
+    store.remeasure()
+  }
+
+  /** Arms region capture: dim the page and wait for a region to be dragged. */
   startScreenshot(): void {
     if (store.get().shot) return
     this.select(null)
     store.set({ shot: { phase: 'arm', rect: null }, hovered: null })
+  }
+
+  /** Folds the two capture buttons out from behind the camera, and back. */
+  toggleShotTools(): void {
+    store.set({ shotOpen: !store.get().shotOpen })
   }
 
   cancelScreenshot(): void {
@@ -239,8 +334,32 @@ class Controller {
   /** Called by the overlay once a region has been dragged out. */
   async finishScreenshot(rect: ShotRect): Promise<void> {
     store.set({ shot: { phase: 'busy', rect } })
-    const outcome = await captureRegion(rect)
+    await this.deliverShot(captureRegion(rect))
+  }
+
+  /**
+   * The whole page, no dragging. One click, and the only thing to decide
+   * afterwards is where to paste it.
+   *
+   * It goes through the same tile walk as a dragged region — the page is
+   * scrolled through the viewport a screen at a time — so a long page takes a
+   * few seconds and the page visibly moves while it happens. Our chrome is
+   * hidden throughout (it would otherwise be in the picture), which is why the
+   * flash at the end matters: it is the only thing that says the scrolling was
+   * ours and that it is over.
+   */
+  async captureFullPage(): Promise<void> {
+    if (store.get().shot) return
+    const rect = fullPage()
+    this.select(null)
+    store.set({ shot: { phase: 'busy', rect }, hovered: null })
+    await this.deliverShot(captureRegion(rect))
+  }
+
+  private async deliverShot(work: Promise<ShotOutcome>): Promise<void> {
+    const outcome = await work
     store.set({ shot: null })
+    if (outcome.ok) this.flash()
     this.toast(
       outcome.ok
         ? outcome.how === 'clipboard'
@@ -248,6 +367,18 @@ class Controller {
           : 'Clipboard unavailable — saved as PNG'
         : `Screenshot failed: ${outcome.error}`,
     )
+  }
+
+  private flashTimer = 0
+
+  /**
+   * The shutter. Mounted only while it runs, so the animation restarts from the
+   * top on every capture rather than needing to be rewound.
+   */
+  private flash(): void {
+    store.set({ flash: true })
+    window.clearTimeout(this.flashTimer)
+    this.flashTimer = window.setTimeout(() => store.set({ flash: false }), 460)
   }
 
   private toastTimer = 0
@@ -379,7 +510,7 @@ class Controller {
     history.stepAll('hide', elements, () => {
       for (const el of elements) setStyle(el, 'display', 'none')
     })
-    store.set({ selected: null, extras: [], hovered: null, undoDepth: history.depth() })
+    store.set({ selected: null, extras: [], hovered: null, ...history.depths() })
   }
 
   /** Ctrl/Cmd+C — takes a detached clone, so the original can change afterwards. */
@@ -411,6 +542,57 @@ class Controller {
   }
 
   /**
+   * One fill across the whole multi-selection.
+   *
+   * Every other styling control needs one unambiguous target, which is why a
+   * multi-selection is otherwise a comparison view — but a fill is the exception
+   * for the same reason grouping is: "make these all the same colour" is a
+   * statement about the *set*, and doing it one element at a time is exactly the
+   * chore the tool exists to remove.
+   *
+   * Whatever each element had is overridden, not merged. The set arriving in
+   * three different colours is the normal case — it is usually *why* you are
+   * doing this — so the ones that already differ are the point, not an obstacle.
+   * Our write is inline and !important, so it lands whatever the page's own CSS
+   * had to say about it.
+   *
+   * `live` brackets a drag: the whole slide through the picker is one undo step,
+   * closed by `finishSelectionBackground` when the pointer comes up.
+   */
+  paintSelection(hex: string, live = false): void {
+    const elements = this.selectionElements()
+    if (!elements.length) return
+    const write = () => {
+      for (const el of elements) setBackground(el, hex)
+    }
+    if (live) {
+      history.beginAll('fill', elements)
+      write()
+    } else {
+      history.stepAll('fill', elements, write)
+    }
+    store.set(history.depths())
+    store.touch()
+  }
+
+  /** Closes the step a colour drag across a multi-selection opened. */
+  finishSelectionPaint(): void {
+    history.commit()
+    store.set(history.depths())
+  }
+
+  /** The set's own fills come back — the picker's ↺, applied to all of them. */
+  clearSelectionBackground(): void {
+    const elements = this.selectionElements()
+    if (!elements.length) return
+    history.stepAll('reset fill', elements, () => {
+      for (const el of elements) clearStyle(el, 'background-color')
+    })
+    store.set(history.depths())
+    store.touch()
+  }
+
+  /**
    * Shift+A — wraps the selection in a new auto-layout container.
    *
    * The group is selected straight away, which is the whole reason the gesture
@@ -425,7 +607,7 @@ class Controller {
       return
     }
     const wrapper = group.wrap(plan)
-    store.set({ undoDepth: history.depth() })
+    store.set(history.depths())
     this.select(wrapper)
     this.toast(`Grouped ${plan.items.length} element${plan.items.length === 1 ? '' : 's'}`)
   }
@@ -445,7 +627,7 @@ class Controller {
       return
     }
     const freed = group.unwrap(selected.el)
-    store.set({ undoDepth: history.depth() })
+    store.set(history.depths())
     this.select(freed[0] ?? null)
   }
 
@@ -483,7 +665,7 @@ class Controller {
 
     history.recordMove(selected.el)
     commitShift(selected.el, shift)
-    store.set({ undoDepth: history.depth() })
+    store.set(history.depths())
     if (shift.ejected) this.toast(`Moved out into ${describe(shift.container)}`)
     // A no-op while it is already on screen, which is why it can run every time.
     selected.el.scrollIntoView({ block: 'nearest', inline: 'nearest' })
@@ -529,28 +711,131 @@ class Controller {
     if (!selected || !clipboard.has()) return
     const result = clipboard.paste(selected.el)
     if (!result) return
-    store.set({ undoDepth: history.depth() })
+    store.set(history.depths())
     this.select(result.node)
+  }
+
+  private pasteFallback = 0
+
+  /**
+   * Ctrl/Cmd+V, as the browser sees it.
+   *
+   * An image wins over whatever is on our own clipboard. Having an image on the
+   * system clipboard is a deliberate and recent act — you just took a
+   * screenshot, or copied a picture out of another app — whereas our element
+   * clipboard holds whatever you last copied here, possibly an hour ago. When
+   * the two disagree, the fresher intent is the image.
+   */
+  private onPaste = (event: ClipboardEvent): void => {
+    if (isOwnNode(event.target)) return
+    // Text being pasted into a node under edit is the browser's business.
+    if (store.get().editing) return
+
+    window.clearTimeout(this.pasteFallback)
+    this.pasteFallback = 0
+    this.swallow(event)
+
+    if (!store.get().selected) return
+    const file = imageIn(event.clipboardData)
+    if (file) void this.insertImageFile(file)
+    else this.pasteIntoSelected()
+  }
+
+  /**
+   * The other way in: pick a file. Opens the OS file dialog from the element
+   * bar's picture button.
+   *
+   * The input is tagged as ours, which is load-bearing rather than tidiness —
+   * `change` is one of the events the freeze swallows at the window, and it is
+   * swallowed in the capture phase, so without the tag our own dialog's result
+   * would be thrown away before the input ever heard about it.
+   */
+  pickImage(): void {
+    if (!store.get().selected) return
+    const input = document.createElement('input')
+    input.type = 'file'
+    input.accept = 'image/*'
+    input.setAttribute(OWN_NODE_ATTR, '')
+    input.style.display = 'none'
+    input.addEventListener('change', () => {
+      const file = input.files?.[0]
+      if (file && isImageFile(file)) void this.insertImageFile(file)
+      input.remove()
+    })
+    document.body.append(input)
+    input.click()
+  }
+
+  private async insertImageFile(file: File): Promise<void> {
+    const { selected } = store.get()
+    if (!selected) return
+    if (tooBig(file)) {
+      this.toast(`That image is too large to embed (${Math.round(file.size / 1024 / 1024)}MB)`)
+      return
+    }
+    try {
+      const img = insertImage(selected.el, await readImage(file), file.name)
+      store.set(history.depths())
+      this.select(img)
+      this.toast(file.name ? `Added ${file.name}` : 'Image added')
+    } catch (error) {
+      this.toast(`Could not add the image: ${error instanceof Error ? error.message : error}`)
+    }
   }
 
   duplicateSelected(): void {
     const { selected } = store.get()
     if (!selected) return
     const copy = clipboard.duplicate(selected.el)
-    store.set({ undoDepth: history.depth() })
+    store.set(history.depths())
     this.select(copy)
   }
 
   /** Timestamp of the last bare "s", for the double-tap shortcut. */
   private lastS = 0
 
+  /**
+   * Keys that belong to the editor as a whole rather than to whatever has the
+   * focus: undo, redo, and Escape. They are answered even when a control in our
+   * own chrome is focused, because "I just clicked a button, now undo that"
+   * is the single most common thing anyone does with this tool.
+   *
+   * A field being typed into is the exception, and the reason for reading the
+   * *composed* target: our overlay lives in a shadow root, so by the time the
+   * event reaches window its target has been retargeted to the host div and
+   * every control in the bar looks identical from out here. Inside a field,
+   * Ctrl+Z is text undo and Escape reverts the value — both are the field's.
+   */
+  private isGlobalKey(event: KeyboardEvent): boolean {
+    const focused = event.composedPath()[0]
+    if (focused instanceof HTMLElement) {
+      const typing =
+        focused instanceof HTMLInputElement ||
+        focused instanceof HTMLTextAreaElement ||
+        focused.isContentEditable
+      if (typing) return false
+    }
+    if (event.key === 'Escape') return true
+    if (!(event.ctrlKey || event.metaKey)) return false
+    const key = event.key.toLowerCase()
+    return key === 'z' || key === 'y'
+  }
+
   private onKeyDown = (event: KeyboardEvent): void => {
     /**
      * Anything typed into our own chrome — a hex box, the font search, a number
      * field — belongs to that control. Without this, typing "s" twice in the
      * font search armed the screenshot, and Delete hid the element being styled.
+     *
+     * Only *typing*, though. Clicking a swatch or a stack button leaves the
+     * focus on that button, and everything after it was arriving here with an
+     * own-node target and being dropped on the floor — which is why Ctrl+Z
+     * "sometimes" did nothing: it did nothing whenever the last thing you
+     * touched was the element bar, which is to say almost always. The
+     * whole-editor keys are answered wherever the focus happens to be sitting;
+     * a text field still keeps Escape and its own native Ctrl+Z.
      */
-    if (isOwnNode(event.target)) return
+    if (isOwnNode(event.target) && !this.isGlobalKey(event)) return
 
     const { editing, selected, shot } = store.get()
 
@@ -589,9 +874,12 @@ class Controller {
     const key = event.key.toLowerCase()
     const accel = event.ctrlKey || event.metaKey
     if (accel && !editing) {
-      if (key === 'z') {
+      // Shift+Z and Ctrl+Y are the same thing on either half of the world's
+      // keyboards; both are accepted so neither camp has to learn the other's.
+      if (key === 'z' || key === 'y') {
         this.swallow(event)
-        this.undo()
+        if (key === 'y' || event.shiftKey) this.redo()
+        else this.undo()
         return
       }
       if (key === 'g' && event.shiftKey && selected) {
@@ -599,14 +887,33 @@ class Controller {
         this.ungroupSelection()
         return
       }
-      if (selected && (key === 'c' || key === 'x' || key === 'v' || key === 'd')) {
+      if (selected && key === 'v') {
+        /**
+         * Not swallowed, unlike its neighbours — only kept from the page.
+         *
+         * Cancelling the keydown would cancel the browser's paste along with it,
+         * and the browser's paste is the only way to see what is on the *system*
+         * clipboard without asking for the clipboardRead permission. So the
+         * keystroke is allowed to produce its `paste` event, onPaste decides
+         * between an image and one of our own elements, and the timer below is
+         * the safety net for the case where no paste event arrives at all —
+         * which is what happens when nothing on the page can take the focus.
+         */
+        event.stopPropagation()
+        window.clearTimeout(this.pasteFallback)
+        this.pasteFallback = window.setTimeout(() => {
+          this.pasteFallback = 0
+          this.pasteIntoSelected()
+        }, 150)
+        return
+      }
+      if (selected && (key === 'c' || key === 'x' || key === 'd')) {
         this.swallow(event)
         if (key === 'c') this.copySelected()
         else if (key === 'x') {
           this.copySelected()
           this.hideSelected()
-        } else if (key === 'v') this.pasteIntoSelected()
-        else this.duplicateSelected()
+        } else this.duplicateSelected()
         return
       }
     }
@@ -642,16 +949,46 @@ class Controller {
       return
     }
 
-    if (event.key !== 'Escape') return
-    if (editing) this.stopEditing()
-    else if (store.get().extras.length) store.set({ extras: [] })
-    else if (selected) this.select(null)
-    else this.deactivate()
+    if (event.key === 'Escape') {
+      this.swallow(event)
+      // Everything off in one press; a second press on an already-clear screen
+      // closes the tool. Exiting is never something Escape does by surprise —
+      // there is always a visibly empty screen in between.
+      if (!this.standDown()) this.deactivate()
+      return
+    }
+
+    /**
+     * Nothing else reaches the page. A single letter is a shortcut on a great
+     * many sites — "/" opens a search, "j" and "k" walk a feed, "g" then "h"
+     * goes home — and a keystroke that navigates out from under the editor is
+     * the same failure as a click that does.
+     *
+     * What is left alone is what was never the page's to begin with: anything
+     * held with Ctrl/Cmd (reload, new tab, the browser's own find) and the
+     * function keys. Preventing those would be us breaking the browser, which
+     * is a good deal worse than a page hotkey firing.
+     */
+    if (editing || event.ctrlKey || event.metaKey || /^F\d+$/.test(event.key)) return
+    this.swallow(event)
   }
 
   private swallow = (event: Event): void => {
     event.preventDefault()
     event.stopPropagation()
+  }
+
+  /**
+   * The blanket freeze (see FROZEN). Two things are let through: our own chrome,
+   * which is where the event was aimed in the first place, and the text node
+   * being edited, which needs its caret, its keystrokes and its input events to
+   * behave exactly as the browser would have them.
+   */
+  private freeze = (event: Event): void => {
+    if (isOwnNode(event.target)) return
+    const { editing } = store.get()
+    if (editing && (event.target === editing || editing.contains(event.target as Node))) return
+    this.swallow(event)
   }
 
   private onViewportChange = (): void => store.remeasure()

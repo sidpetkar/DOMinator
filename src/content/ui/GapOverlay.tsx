@@ -40,7 +40,7 @@ export function GapOverlay({ node, readOnly = false }: { node: Node; readOnly?: 
       onMove: (drag) => setAxisGap(el, which, start + (alongX ? drag.dx : drag.dy)),
       onEnd: () => {
         history.commit()
-        store.set({ interaction: 'idle', undoDepth: history.depth() })
+        store.set({ interaction: 'idle', ...history.depths() })
       },
     })
   }

@@ -1,10 +1,14 @@
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
 import { startDrag } from '../core/drag'
 import {
+  cssColor,
   hexToRgb,
+  hslToRgb,
   hsvToRgb,
+  parseColor,
   report,
   rgbToHex,
+  rgbToHsl,
   rgbToHsv,
   type RGB,
   type ContrastReport,
@@ -33,6 +37,14 @@ export function ColorPicker({
   onReset,
   dropUp,
   /**
+   * Which edge the panel hangs from. It trails to the *left* of its button by
+   * default, which is right for the element bar — that bar is anchored to the
+   * element's left edge, so there is always room that way. A button sitting near
+   * the left of the window needs the opposite, or 236px of panel ends up off
+   * screen.
+   */
+  align = 'right',
+  /**
    * Contrast only means something for text. A card's fill or a border colour has
    * no foreground to be legible against, so the readout is dropped rather than
    * shown against an arbitrary pairing.
@@ -41,19 +53,40 @@ export function ColorPicker({
 }: {
   value: string
   background?: RGB
-  onChange: (hex: string) => void
+  /**
+   * The chosen colour as CSS — six-digit hex while it is opaque, `rgba()` once
+   * it is not. Callers write it straight into a declaration; none of them has to
+   * know which of the two it got.
+   */
+  onChange: (color: string) => void
   onClose: () => void
   /** Brackets a drag, so the caller can fold it into one undo step. */
   onGesture?: (active: boolean) => void
   /** Drops our override so the page's own colour returns. */
   onReset?: () => void
   dropUp: boolean
+  align?: 'left' | 'right'
   showContrast?: boolean
 }) {
   const panelRef = useRef<HTMLDivElement>(null)
   const svRef = useRef<HTMLDivElement>(null)
   const hueRef = useRef<HTMLDivElement>(null)
-  const [hex, setHex] = useState(value)
+  const alphaRef = useRef<HTMLDivElement>(null)
+  const parsed = parseColor(value) ?? { rgb: hexToRgb(value), alpha: 1 }
+  const [colour, setColour] = useState<{ rgb: RGB; alpha: number }>(parsed)
+  /**
+   * Which notation the numbers are shown in. Local, not stored: it is a reading
+   * preference for the panel in front of you, and every picker in the product
+   * opening in whatever mode you last used somewhere else would be a surprise
+   * rather than a convenience.
+   */
+  const [mode, setMode] = useState<'hex' | 'hsl'>('hex')
+  /**
+   * What the hex box is *showing*, which is not always a colour: "#ff" is a
+   * legitimate thing to have typed on the way to "#ff0000". The draft holds the
+   * half-finished text and only the parseable states are emitted.
+   */
+  const [draft, setDraft] = useState<string | null>(null)
   useDismiss(panelRef, true, onClose)
 
   // Follow the element when its colour changes from outside — a reset, or an
@@ -62,7 +95,8 @@ export function ColorPicker({
   useEffect(() => {
     if (value !== emitted.current) {
       emitted.current = value
-      setHex(value)
+      setColour(parseColor(value) ?? { rgb: hexToRgb(value), alpha: 1 })
+      setDraft(null)
     }
   }, [value])
 
@@ -73,15 +107,25 @@ export function ColorPicker({
    */
   const preview = (on: boolean) => store.set({ preview: on })
 
-  const rgb = hexToRgb(hex)
+  const { rgb, alpha } = colour
+  const hex = rgbToHex(rgb)
   const hsv = rgbToHsv(rgb)
+  const hsl = rgbToHsl(rgb)
+  /**
+   * Contrast is measured on the opaque colour. A half-transparent grey over an
+   * unknown backdrop has no single ratio, and quietly reporting the one it would
+   * have at full strength is the kind of accessibility number that is worse than
+   * none — so the readout describes the pigment, and the alpha slider is left to
+   * speak for itself.
+   */
   const stats = showContrast && background ? report(rgb, background) : null
 
-  const commit = (next: RGB) => {
-    const nextHex = rgbToHex(next)
-    emitted.current = nextHex
-    setHex(nextHex)
-    onChange(nextHex)
+  const commit = (next: RGB, nextAlpha = alpha) => {
+    const css = cssColor(next, nextAlpha)
+    emitted.current = css
+    setColour({ rgb: next, alpha: nextAlpha })
+    setDraft(null)
+    onChange(css)
   }
 
   const dragSV = (event: ReactPointerEvent) => {
@@ -132,9 +176,27 @@ export function ColorPicker({
     })
   }
 
+  const dragAlpha = (event: ReactPointerEvent) => {
+    const box = alphaRef.current?.getBoundingClientRect()
+    if (!box) return
+    const pick = (x: number) => commit(rgb, Math.min(1, Math.max(0, (x - box.left) / box.width)))
+    onGesture?.(true)
+    preview(true)
+    pick(event.clientX)
+    startDrag(event.nativeEvent, {
+      cursor: 'ew-resize',
+      onMove: (d) => pick(d.x),
+      onEnd: () => {
+        onGesture?.(false)
+        preview(false)
+      },
+    })
+  }
+
   const pickFromScreen = async () => {
-    const Picker = (window as unknown as { EyeDropper?: new () => { open(): Promise<{ sRGBHex: string }> } })
-      .EyeDropper
+    const Picker = (
+      window as unknown as { EyeDropper?: new () => { open(): Promise<{ sRGBHex: string }> } }
+    ).EyeDropper
     if (!Picker) return
     // Our own overlays are painted into the page, so they must go before the
     // dropper can sample anything real.
@@ -142,7 +204,7 @@ export function ColorPicker({
     await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))
     try {
       const { sRGBHex } = await new Picker().open()
-      commit(hexToRgb(sRGBHex))
+      commit(hexToRgb(sRGBHex), alpha)
     } catch {
       /* dismissed */
     } finally {
@@ -154,7 +216,7 @@ export function ColorPicker({
     <div
       ref={panelRef}
       {...{ [POPOVER_ATTR]: '' }}
-      className="dm-panel absolute right-0 overflow-hidden"
+      className={cx('dm-panel absolute overflow-hidden', align === 'left' ? 'left-0' : 'right-0')}
       style={{ width: PANEL_WIDTH, ...(dropUp ? { bottom: 30 } : { top: 30 }) }}
       onPointerDown={(event) => event.stopPropagation()}
     >
@@ -195,8 +257,7 @@ export function ColorPicker({
           onPointerDown={dragHue}
           className="relative h-[10px] flex-1 cursor-ew-resize rounded-[999px]"
           style={{
-            background:
-              'linear-gradient(to right, #f00, #ff0, #0f0, #0ff, #00f, #f0f, #f00)',
+            background: 'linear-gradient(to right, #f00, #ff0, #0f0, #0ff, #00f, #f0f, #f00)',
           }}
         >
           <span
@@ -206,24 +267,87 @@ export function ColorPicker({
         </div>
       </div>
 
+      {/* Transparency. The checkerboard is under the gradient rather than beside
+          it, so the track itself demonstrates what the number means: the colour
+          fading out over the pattern that stands for "nothing behind this". */}
+      <div className="flex items-center gap-2 px-2 pt-2">
+        {'EyeDropper' in window && <span className="w-[22px] shrink-0" />}
+        <div
+          ref={alphaRef}
+          onPointerDown={dragAlpha}
+          aria-label="Transparency"
+          className="relative h-[10px] flex-1 cursor-ew-resize overflow-hidden rounded-[999px]"
+          style={CHECKERBOARD}
+        >
+          <span
+            className="pointer-events-none absolute inset-0 rounded-[999px]"
+            style={{
+              background: `linear-gradient(to right, ${cssColor(rgb, 0)}, ${hex})`,
+            }}
+          />
+          <span
+            className="pointer-events-none absolute top-1/2 h-[14px] w-[14px] -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-white bg-transparent"
+            style={{ left: `${alpha * 100}%`, boxShadow: '0 0 0 1px rgba(0,0,0,.3)' }}
+          />
+        </div>
+      </div>
+
       <div className="flex items-center gap-1.5 px-2 py-2">
-        <span
-          className="h-[20px] w-[20px] shrink-0 rounded-[5px] border border-line"
-          style={{ background: hex }}
+        <select
+          aria-label="Colour notation"
+          title="Show the value as hex or as HSL"
+          value={mode}
+          onChange={(event) => setMode(event.target.value as 'hex' | 'hsl')}
+          className="dm-field h-[24px] shrink-0 rounded-[6px] border border-line bg-paper px-1 text-[11px] font-medium text-ink"
+        >
+          <option value="hex">Hex</option>
+          <option value="hsl">HSL</option>
+        </select>
+
+        {mode === 'hex' ? (
+          <input
+            aria-label="Hex value"
+            value={draft ?? hex.replace('#', '').toUpperCase()}
+            onChange={(event) => {
+              const next = event.target.value
+              setDraft(next)
+              const clean = next.trim().replace(/^#/, '')
+              if (/^[0-9a-f]{6}$/i.test(clean)) commit(hexToRgb(`#${clean}`))
+            }}
+            onBlur={() => setDraft(null)}
+            className="dm-field min-w-0 flex-1 rounded-[6px] border border-line bg-paper px-1.5 py-[3px] text-[11px] text-ink tabular-nums"
+          />
+        ) : (
+          <span className="flex min-w-0 flex-1 items-center gap-1">
+            <Channel
+              label="Hue"
+              value={Math.round(hsl.h)}
+              max={360}
+              onChange={(h) => commit(hslToRgb({ ...hsl, h }))}
+            />
+            <Channel
+              label="Saturation"
+              value={hsl.s}
+              max={100}
+              onChange={(sat) => commit(hslToRgb({ ...hsl, s: sat }))}
+            />
+            <Channel
+              label="Lightness"
+              value={hsl.l}
+              max={100}
+              onChange={(l) => commit(hslToRgb({ ...hsl, l }))}
+            />
+          </span>
+        )}
+
+        <Channel
+          label="Opacity"
+          value={Math.round(alpha * 100)}
+          max={100}
+          suffix="%"
+          onChange={(next) => commit(rgb, next / 100)}
         />
-        <input
-          aria-label="Hex value"
-          value={hex}
-          onChange={(event) => {
-            const next = event.target.value
-            setHex(next)
-            if (/^#?[0-9a-f]{6}$/i.test(next.trim())) {
-              emitted.current = rgbToHex(hexToRgb(next))
-              onChange(emitted.current)
-            }
-          }}
-          className="dm-field min-w-0 flex-1 rounded-[6px] border border-line bg-paper px-1.5 py-[3px] text-[11px] text-ink tabular-nums"
-        />
+
         {onReset && (
           <button
             type="button"
@@ -241,6 +365,67 @@ export function ColorPicker({
         <Contrast stats={stats} foreground={hex} background={rgbToHex(background)} />
       )}
     </div>
+  )
+}
+
+/**
+ * The "nothing behind this" pattern, as a pair of offset gradients rather than
+ * an image: it costs no bytes, scales with the track, and cannot be blocked by
+ * the host page's content policy the way a data: URL background can be.
+ */
+const CHECKER_TILE = 6
+const CHECKERBOARD = {
+  backgroundColor: '#fff',
+  backgroundImage:
+    'linear-gradient(45deg, rgba(0,0,0,.18) 25%, transparent 25%, transparent 75%, rgba(0,0,0,.18) 75%),' +
+    'linear-gradient(45deg, rgba(0,0,0,.18) 25%, transparent 25%, transparent 75%, rgba(0,0,0,.18) 75%)',
+  backgroundSize: `${CHECKER_TILE}px ${CHECKER_TILE}px`,
+  // Both layers at one offset are two identical sets of diagonal stripes lying
+  // on top of each other; half a tile apart, they interlock into the checker.
+  backgroundPosition: `0 0, ${CHECKER_TILE / 2}px ${CHECKER_TILE / 2}px`,
+} as const
+
+/**
+ * One number of a colour — a hue, a lightness, an opacity.
+ *
+ * Typed rather than nudged, and applied on every keystroke that parses, which is
+ * the same bargain the number fields in the bar make: the page tracks what you
+ * are typing, so a value is judged in place rather than after a commit. Empty is
+ * allowed while typing and simply doesn't emit, or backspacing the last digit of
+ * "100" would snap the colour to 0 on the way to "20".
+ */
+function Channel({
+  label,
+  value,
+  max,
+  suffix,
+  onChange,
+}: {
+  label: string
+  value: number
+  max: number
+  suffix?: string
+  onChange: (next: number) => void
+}) {
+  const [draft, setDraft] = useState<string | null>(null)
+  return (
+    <span className="flex min-w-0 items-center rounded-[6px] border border-line bg-paper pr-1">
+      <input
+        aria-label={label}
+        title={label}
+        value={draft ?? String(value)}
+        onChange={(event) => {
+          const next = event.target.value
+          setDraft(next)
+          const parsed = Number.parseFloat(next)
+          if (Number.isFinite(parsed)) onChange(Math.min(max, Math.max(0, parsed)))
+        }}
+        onBlur={() => setDraft(null)}
+        onKeyDown={(event) => event.stopPropagation()}
+        className="dm-field w-[34px] min-w-0 rounded-[6px] border-0 bg-transparent px-1 py-[3px] text-center text-[11px] text-ink tabular-nums"
+      />
+      {suffix && <span className="text-[10px] text-ink-soft">{suffix}</span>}
+    </span>
   )
 }
 
@@ -281,8 +466,8 @@ function Contrast({
       </div>
 
       <p className="m-0 px-2 py-1 text-[9px] leading-tight text-ink-soft">
-        AA/AAA are for body text ({stats.ratio.toFixed(2)} vs 4.5 / 7). Large or bold text
-        passes at 3 / 4.5 — {stats.aaLarge ? 'AA ✓' : 'AA ✗'} {stats.aaaLarge ? 'AAA ✓' : 'AAA ✗'}.
+        AA/AAA are for body text ({stats.ratio.toFixed(2)} vs 4.5 / 7). Large or bold text passes at
+        3 / 4.5 — {stats.aaLarge ? 'AA ✓' : 'AA ✗'} {stats.aaaLarge ? 'AAA ✓' : 'AAA ✗'}.
       </p>
     </div>
   )
@@ -331,5 +516,3 @@ const Verdict = ({ ok, label }: { ok: boolean; label: string }) => (
     {label}
   </span>
 )
-
-

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import type { FontMeta } from '@/shared/messages'
 import type { Metrics } from '../core/geometry'
-import { effectiveBackground } from '../core/color'
+import { cssColor, effectiveBackground, parseColor } from '../core/color'
 import * as history from '../core/history'
 import { loadFamily } from '../core/fonts'
 import { clearStyle, px } from '../core/styles'
@@ -10,6 +10,7 @@ import { applyTypeStyle, rememberSelection, restoreSelection } from '../core/tex
 import { ColorPicker } from './ColorPicker'
 import { FontPicker } from './FontPicker'
 import { NumberField } from './NumberField'
+import { PanelGrip, usePanelDrag } from './PanelGrip'
 import { TEXT_ALIGN_ICONS } from './icons'
 import { zoom } from '../core/zoom'
 import { zoomStable } from './util'
@@ -63,7 +64,7 @@ export function TextToolbar({ el, metrics }: { el: HTMLElement; metrics: Metrics
     applyTypeStyle(el, decls)
     restoreSelection(el)
     if (!gesture.current) history.commit()
-    store.set({ undoDepth: history.depth() })
+    store.set(history.depths())
   }
 
   const pickFamily = async (meta: FontMeta) => {
@@ -87,8 +88,15 @@ export function TextToolbar({ el, metrics }: { el: HTMLElement; metrics: Metrics
 
   const { rect } = metrics
   const above = rect.top > TOOLBAR_HEIGHT + 12
-  const top = above ? rect.top - TOOLBAR_HEIGHT - 8 : rect.top + rect.height + 8
-  const left = Math.max(8, Math.min(rect.left, window.innerWidth - 620))
+  const anchoredTop = above ? rect.top - TOOLBAR_HEIGHT - 8 : rect.top + rect.height + 8
+  const anchoredLeft = Math.max(8, Math.min(rect.left, window.innerWidth - 620))
+
+  // Anchored to the words being edited, until the grip parks it somewhere the
+  // text isn't underneath it.
+  const barRef = useRef<HTMLDivElement>(null)
+  const grip = usePanelDrag('text', barRef)
+  const top = grip.pinned ? grip.pinned.top : anchoredTop
+  const left = grip.pinned ? grip.pinned.left : anchoredLeft
 
   // The font list must never cover the words being restyled: it opens away from
   // the text, i.e. upward when the toolbar is anchored above it — unless that
@@ -104,12 +112,14 @@ export function TextToolbar({ el, metrics }: { el: HTMLElement; metrics: Metrics
 
   return (
     <div
-      className="dm-panel dm-interactive flex items-center gap-1 px-1.5"
+      ref={barRef}
+      className="dm-panel dm-interactive flex items-center gap-1 px-1"
       style={{ position: 'fixed', top, left, height: TOOLBAR_HEIGHT, ...zoomStable(zoom(), 'top left') }}
       // Controls take focus (the search field needs it); the highlight overlay
       // keeps the target visible and restoreSelection puts the range back.
       onPointerDown={(event) => event.stopPropagation()}
     >
+      <PanelGrip onGrab={grip.onGrab} reset={grip.reset} />
       <FontPicker value={family} onPick={pickFamily} dropUp={dropUp} maxHeight={listHeight} />
 
       <select
@@ -205,7 +215,7 @@ export function TextToolbar({ el, metrics }: { el: HTMLElement; metrics: Metrics
               gesture.current = active
               if (!active) {
                 history.commit()
-                store.set({ undoDepth: history.depth() })
+                store.set(history.depths())
               }
             }}
             onChange={(next) => {
@@ -215,7 +225,7 @@ export function TextToolbar({ el, metrics }: { el: HTMLElement; metrics: Metrics
             onReset={() => {
               history.step('reset colour', el, () => clearStyle(el, 'color'))
               setColor(toHex(window.getComputedStyle(el).color))
-              store.set({ undoDepth: history.depth() })
+              store.set(history.depths())
             }}
           />
         )}
@@ -250,7 +260,17 @@ function IconButton({
 
 
 /** Computed colours come back as rgb(); <input type=color> only speaks hex. */
+/**
+ * The computed colour as CSS the picker can round-trip — including its alpha.
+ *
+ * It used to drop to six-digit hex, which was fine while there was nothing in
+ * the panel that could express transparency. With a slider there, flattening
+ * here would mean opening the picker on faded type, seeing the slider sitting at
+ * 100%, and making it solid by touching anything at all.
+ */
 function toHex(value: string): string {
+  const parsed = parseColor(value)
+  if (parsed) return cssColor(parsed.rgb, parsed.alpha)
   const parts = /rgba?\((\d+),\s*(\d+),\s*(\d+)/.exec(value)
   if (!parts) return '#000000'
   return `#${parts

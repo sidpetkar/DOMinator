@@ -1,4 +1,4 @@
-import { HOST_ID } from '@/shared/constants'
+import { HOST_ID, OWN_NODE_ATTR } from '@/shared/constants'
 import { askBackground } from '@/shared/messages'
 import { pageScroller, scrollerAt, toClient, toContent, type Scroller } from './scroller'
 import { store } from './store'
@@ -113,6 +113,27 @@ export function beginRegion(event: PointerEvent, onDone: (rect: ShotRect) => voi
   frame = requestAnimationFrame(tick)
 }
 
+/**
+ * The whole document, as a region on the page scroller — the one-click capture.
+ *
+ * Width is the viewport rather than the document's `scrollWidth`. A page's
+ * scrollable width is inflated by any single overflowing element — a decorative
+ * blob, a wide table, an off-canvas drawer parked to the right — far more often
+ * than it reflects content anyone wants in the picture, and the cost of getting
+ * that wrong is a shot that is mostly empty margin. Height is the opposite case:
+ * a long page is exactly what this button is for.
+ */
+export function fullPage(): ShotRect {
+  active = pageScroller()
+  const doc = document.scrollingElement ?? document.documentElement
+  return {
+    left: 0,
+    top: 0,
+    width: Math.min(window.innerWidth, doc.scrollWidth),
+    height: Math.max(doc.scrollHeight, window.innerHeight),
+  }
+}
+
 // — capture ——————————————————————————————————————————————————
 
 const settle = (ms = 90): Promise<void> =>
@@ -148,22 +169,41 @@ function hideOwnUi(): () => void {
  * again in every tile and appear repeatedly down a long screenshot. Pinning is
  * removed for the capture and restored precisely afterwards.
  *
+ * The two cases need different answers, which is the whole of the sticky bug: a
+ * sticky element is *in* the flow and its siblings are laid out around the space
+ * it occupies. Sending it to `absolute` — as this did for both — takes it out of
+ * flow, so everything below jumped up by the header's height the moment the
+ * capture began. The tiles were then photographed against a page that no longer
+ * matched the region the user had dragged, and the result came out sheared, with
+ * a band of content missing or repeated at each tile seam.
+ *
+ * `static` is the right answer for sticky: it stops sticking, keeps its space,
+ * and appears exactly once at the point in the page it belongs to. `fixed` was
+ * never in flow to begin with, so `absolute` moves it nowhere and it lands once
+ * at the top where a header is expected.
+ *
  * These writes bypass styles.ts on purpose: they are not user edits and must
- * never reach the undo stack or the Reset count.
+ * never reach the undo stack or the Reset count. The priority is captured with
+ * the value because a page that set `position: sticky !important` would
+ * otherwise come back from a screenshot with its header no longer sticking.
  */
 function unpinFixed(): () => void {
-  const touched: { el: HTMLElement; value: string }[] = []
+  const touched: { el: HTMLElement; value: string; priority: string }[] = []
   for (const el of document.body.querySelectorAll<HTMLElement>('*')) {
     const position = window.getComputedStyle(el).position
     if (position !== 'fixed' && position !== 'sticky') continue
-    touched.push({ el, value: el.style.position })
-    el.style.setProperty('position', 'absolute', 'important')
+    touched.push({
+      el,
+      value: el.style.getPropertyValue('position'),
+      priority: el.style.getPropertyPriority('position'),
+    })
+    el.style.setProperty('position', position === 'sticky' ? 'static' : 'absolute', 'important')
     if (touched.length > 400) break
   }
   return () => {
-    for (const { el, value } of touched) {
+    for (const { el, value, priority } of touched) {
       el.style.removeProperty('position')
-      if (value) el.style.setProperty('position', value)
+      if (value) el.style.setProperty('position', value, priority)
     }
   }
 }
@@ -291,6 +331,15 @@ async function deliver(canvas: HTMLCanvasElement): Promise<ShotOutcome> {
     return { ok: true, how: 'clipboard' }
   } catch {
     const link = document.createElement('a')
+    /**
+     * Ours, not the page's. Without this the editor treats the link's own
+     * synthetic click as a click on the page: it swallows it — which cancels the
+     * download, so the fallback quietly delivered nothing — and then selects
+     * whatever happens to sit at (0, 0), because a dispatched click carries no
+     * real coordinates. The whole point of the fallback is to not lose a capture
+     * the clipboard refused, and it was losing every one of them.
+     */
+    link.setAttribute(OWN_NODE_ATTR, '')
     link.href = URL.createObjectURL(blob)
     link.download = `dominator-screenshot-${canvas.width}x${canvas.height}.png`
     link.style.display = 'none'

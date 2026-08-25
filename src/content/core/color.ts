@@ -18,9 +18,7 @@ export const rgbToHex = ({ r, g, b }: RGB): string =>
 export function hexToRgb(hex: string): RGB {
   const short = /^#([0-9a-f]{3})$/i.exec(hex.trim())
   const full = /^#?([0-9a-f]{6})$/i.exec(hex.trim())
-  const body = short?.[1]
-    ? [...short[1]].map((c) => c + c).join('')
-    : (full?.[1] ?? '000000')
+  const body = short?.[1] ? [...short[1]].map((c) => c + c).join('') : (full?.[1] ?? '000000')
   return {
     r: Number.parseInt(body.slice(0, 2), 16),
     g: Number.parseInt(body.slice(2, 4), 16),
@@ -50,6 +48,85 @@ export function parseColor(css: string): { rgb: RGB; alpha: number } | null {
   }
 }
 
+/**
+ * A colour and its transparency, as one CSS string.
+ *
+ * Opaque colours stay six-digit hex — that is what the page's own stylesheet
+ * almost certainly says, what the hex field shows, and what anyone reading the
+ * inspector expects. `rgba()` only appears once there is actually an alpha to
+ * carry, so turning transparency on is visible in the value rather than being a
+ * silent notation change applied to every colour in the product.
+ */
+export function cssColor(rgb: RGB, alpha: number): string {
+  if (alpha >= 1) return rgbToHex(rgb)
+  const round = (n: number) => Math.round(n)
+  return `rgba(${round(rgb.r)}, ${round(rgb.g)}, ${round(rgb.b)}, ${Number(alpha.toFixed(3))})`
+}
+
+export interface HSL {
+  /** Degrees, 0–360. */
+  h: number
+  /** Percentages, 0–100 — the units the fields show and CSS takes. */
+  s: number
+  l: number
+}
+
+/**
+ * HSL alongside the HSV the wheel is built on.
+ *
+ * They are not the same model and cannot share a representation: HSV's V is how
+ * bright the pigment is, HSL's L is how far it is between black and white, so
+ * the same swatch is `s: 100, v: 100` in one and `s: 100, l: 50` in the other.
+ * The picker keeps working in HSV because that is what a saturation/value square
+ * *is*; HSL exists because it is the notation people write CSS in.
+ */
+export function rgbToHsl({ r, g, b }: RGB): HSL {
+  const [rn, gn, bn] = [r / 255, g / 255, b / 255] as [number, number, number]
+  const max = Math.max(rn, gn, bn)
+  const min = Math.min(rn, gn, bn)
+  const d = max - min
+  const l = (max + min) / 2
+  let h = 0
+  if (d) {
+    if (max === rn) h = ((gn - bn) / d) % 6
+    else if (max === gn) h = (bn - rn) / d + 2
+    else h = (rn - gn) / d + 4
+    h *= 60
+  }
+  const s = d === 0 ? 0 : d / (1 - Math.abs(2 * l - 1))
+  return {
+    h: ((h % 360) + 360) % 360,
+    s: Math.round(s * 100),
+    l: Math.round(l * 100),
+  }
+}
+
+export function hslToRgb({ h, s, l }: HSL): RGB {
+  const sn = Math.min(100, Math.max(0, s)) / 100
+  const ln = Math.min(100, Math.max(0, l)) / 100
+  const c = (1 - Math.abs(2 * ln - 1)) * sn
+  const hp = (((h % 360) + 360) % 360) / 60
+  const x = c * (1 - Math.abs((hp % 2) - 1))
+  const [r1, g1, b1] =
+    hp < 1
+      ? [c, x, 0]
+      : hp < 2
+        ? [x, c, 0]
+        : hp < 3
+          ? [0, c, x]
+          : hp < 4
+            ? [0, x, c]
+            : hp < 5
+              ? [x, 0, c]
+              : [c, 0, x]
+  const m = ln - c / 2
+  return {
+    r: Math.round(((r1 ?? 0) + m) * 255),
+    g: Math.round(((g1 ?? 0) + m) * 255),
+    b: Math.round(((b1 ?? 0) + m) * 255),
+  }
+}
+
 export function rgbToHsv({ r, g, b }: RGB): HSV {
   const [rn, gn, bn] = [r / 255, g / 255, b / 255] as [number, number, number]
   const max = Math.max(rn, gn, bn)
@@ -66,7 +143,7 @@ export function rgbToHsv({ r, g, b }: RGB): HSV {
 
 export function hsvToRgb({ h, s, v }: HSV): RGB {
   const c = v * s
-  const hp = ((h % 360) + 360) % 360 / 60
+  const hp = (((h % 360) + 360) % 360) / 60
   const x = c * (1 - Math.abs((hp % 2) - 1))
   const [r1, g1, b1] =
     hp < 1

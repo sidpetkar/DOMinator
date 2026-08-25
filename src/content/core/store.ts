@@ -31,6 +31,12 @@ function childSignature(el: HTMLElement): string {
 
 export type Interaction = 'idle' | 'resize' | 'spacing' | 'move'
 
+/** The floating panels, each of which can be picked up by its 6-dot grip. */
+export type PanelId = 'element' | 'status' | 'text' | 'group'
+
+/** The element-bar groups that fold out into their parts. */
+export type BoxGroup = 'padding' | 'margin' | 'radius' | 'shadow'
+
 /** Which accessibility check is showing. Also the tag the overlay switches on. */
 export type LensKind = 'contrast' | 'tab' | 'aria' | 'alt'
 
@@ -66,6 +72,17 @@ export interface EditorSnapshot {
   xray: boolean
   /** Whether the accessibility tools are revealed in the status bar. */
   adaOpen: boolean
+  /** Whether the full-page button is revealed beside the camera. */
+  shotOpen: boolean
+  /**
+   * Which element-bar groups are unfolded into their four parts.
+   *
+   * Kept here rather than in the bar's own state because it is a preference
+   * about how you work, not about the current selection: someone who has opened
+   * padding out into four sides wants it that way for the next element too, and
+   * the bar re-mounts every time the selection is cleared.
+   */
+  expanded: Partial<Record<BoxGroup, boolean>>
   /**
    * The accessibility lens in force, if any. One slot rather than a flag per
    * check: they each dim the page and box up their own findings, so two at once
@@ -75,10 +92,14 @@ export interface EditorSnapshot {
   lens: Lens | null
   /** Undo depth, mirrored here purely so the status bar re-renders. */
   undoDepth: number
+  /** How much has been undone and is still waiting to be put back. */
+  redoDepth: number
   /** Screenshot mode: null when off (see screenshot.ts). */
   shot: ShotState | null
   /** Transient confirmation, cleared on a timer. */
   toast: string | null
+  /** The shutter flash, on for one animation after a capture lands. */
+  flash: boolean
   /**
    * True while a colour is being chosen. Every overlay that tints the page —
    * the wash, the green/orange/pink spacing bands — steps aside, because you
@@ -87,10 +108,17 @@ export interface EditorSnapshot {
    */
   preview: boolean
   /**
-   * Where the status bar has been dragged to, in viewport coordinates. Null
-   * keeps it at its default bottom-centre spot.
+   * Where each floating panel has been dragged to, in viewport coordinates,
+   * keyed by panel. A panel with no entry sits wherever it anchors itself —
+   * against the selection, or at the bottom of the window.
+   *
+   * Kept here rather than in each panel's own state because most of them mount
+   * and unmount constantly: the type toolbar exists only while text is being
+   * edited, and the multi-selection prompt only while more than one thing is
+   * picked. A position that reset every time the panel reappeared would make
+   * dragging it pointless.
    */
-  barPos: { left: number; top: number } | null
+  panels: Partial<Record<PanelId, { left: number; top: number }>>
 }
 
 const EMPTY: EditorSnapshot = {
@@ -103,12 +131,16 @@ const EMPTY: EditorSnapshot = {
   drop: null,
   xray: false,
   adaOpen: false,
+  shotOpen: false,
+  expanded: {},
   lens: null,
   undoDepth: 0,
+  redoDepth: 0,
   shot: null,
   toast: null,
+  flash: false,
   preview: false,
-  barPos: null,
+  panels: {},
 }
 
 type Listener = () => void
