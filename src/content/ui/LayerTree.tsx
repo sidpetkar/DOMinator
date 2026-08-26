@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
 import { OWN_NODE_ATTR } from '@/shared/constants'
+import { LOGO_DATA_URL } from '@/shared/logo'
 import { controller } from '../core/controller'
 import { startDrag } from '../core/drag'
 import { nodeOf, store, type EditorSnapshot } from '../core/store'
@@ -79,11 +80,25 @@ export function LayerTree({ snapshot }: { snapshot: EditorSnapshot }) {
     })
   }, [selected])
 
-  // Follow the selection down the list, but never fight a scroll in progress.
+  /**
+   * Follow the selection down the list.
+   *
+   * By moving the list's own `scrollTop`, not by `scrollIntoView` on the row.
+   * `scrollIntoView` scrolls *every* scrollable ancestor, and one of a row's
+   * ancestors is the document — so selecting a row both scrolled this list and
+   * issued a second scroll on the page, which superseded the smooth scroll
+   * `reveal` had just started and left the page two pixels from where it began.
+   * A tree that scrolls the document as a side effect of scrolling itself is
+   * wrong regardless; that it silently ate the reveal is how it was found.
+   */
   useEffect(() => {
-    if (!selected) return
-    const row = listRef.current?.querySelector(`[data-selected="true"]`)
-    row?.scrollIntoView({ block: 'nearest' })
+    const list = listRef.current
+    const row = list?.querySelector<HTMLElement>('[data-selected="true"]')
+    if (!list || !row) return
+    const pane = list.getBoundingClientRect()
+    const seat = row.getBoundingClientRect()
+    if (seat.top < pane.top) list.scrollTop -= pane.top - seat.top
+    else if (seat.bottom > pane.bottom) list.scrollTop += seat.bottom - pane.bottom
   }, [selected, open])
 
   const toggle = (el: Element) =>
@@ -198,30 +213,21 @@ export function LayerTree({ snapshot }: { snapshot: EditorSnapshot }) {
         ...zoomStable(z, 'top left'),
       }}
     >
+      {/* Identity, matching the right-hand panel's title bar and the status bar
+          — the three pieces of chrome read as one product rather than as three
+          panels that happen to be on screen together. */}
       <div className="flex items-center gap-1.5 border-b border-line px-2.5 py-1.5">
-        {/* `shrink-0`, which is the whole reason it was invisible: a 12px SVG in
-            a flex row next to a `flex-1` input is compressed to nothing. */}
-        <span className="flex shrink-0 items-center text-ink-soft">
-          <SearchIcon />
-        </span>
-        <input
-          value={query}
-          onChange={(event) => setQuery(event.target.value)}
-          onKeyDown={(event) => event.stopPropagation()}
-          placeholder="Search tag, id, class or text"
-          aria-label="Search the layer tree"
-          className="dm-field min-w-0 flex-1 border-0 bg-transparent p-0 text-[11px] text-ink placeholder:text-ink-soft"
+        <img
+          src={LOGO_DATA_URL}
+          alt=""
+          width="16"
+          height="16"
+          className="shrink-0 rounded-[4px]"
+          style={{ display: 'block' }}
         />
-        {query && (
-          <button
-            type="button"
-            aria-label="Clear the search"
-            onClick={() => setQuery('')}
-            className="shrink-0 rounded-[4px] border-0 bg-transparent px-1 text-[11px] text-ink-soft hover:bg-ink/5"
-          >
-            ×
-          </button>
-        )}
+        <span className="min-w-0 flex-1 truncate text-[11px] font-medium tracking-tight text-ink">
+          DOMinator
+        </span>
         <PanelCollapse collapsed={collapsed} label="the layer tree" onToggle={() => fold('tree')} />
       </div>
 
@@ -244,6 +250,35 @@ export function LayerTree({ snapshot }: { snapshot: EditorSnapshot }) {
                 : 'Nowhere to drop that'}
             </div>
           )}
+          {/* Search sits under the tree rather than over it. It is the panel's
+              least used control and the tree is its subject: putting the field
+              first pushed the thing you came to look at one row further from the
+              top of every glance. */}
+          <div className="flex items-center gap-1.5 border-t border-line px-2.5 py-1.5">
+            {/* `shrink-0`, which is the whole reason it was invisible: a 12px SVG
+                in a flex row next to a `flex-1` input is compressed to nothing. */}
+            <span className="flex shrink-0 items-center text-ink-soft">
+              <SearchIcon />
+            </span>
+            <input
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              onKeyDown={(event) => event.stopPropagation()}
+              placeholder="Search tag, id, class or text"
+              aria-label="Search the layer tree"
+              className="dm-field min-w-0 flex-1 border-0 bg-transparent p-0 text-[11px] text-ink placeholder:text-ink-soft"
+            />
+            {query && (
+              <button
+                type="button"
+                aria-label="Clear the search"
+                onClick={() => setQuery('')}
+                className="shrink-0 rounded-[4px] border-0 bg-transparent px-1 text-[11px] text-ink-soft hover:bg-ink/5"
+              >
+                ×
+              </button>
+            )}
+          </div>
         </>
       )}
     </div>
@@ -312,7 +347,12 @@ function Row({
       data-layer-row=""
       data-selected={selected ? 'true' : undefined}
       onPointerDown={onGrab}
-      onClick={() => controller.select(el)}
+      onClick={() => {
+        controller.select(el)
+        // The tree exists to reach things you cannot see, so picking one has to
+        // bring the page to it.
+        controller.reveal(el)
+      }}
       /* Hovering a row lights the element up on the page, which is most of how
          you find your way around a tree of anonymous divs. */
       onPointerEnter={() => store.set({ hovered: nodeOf(el) })}

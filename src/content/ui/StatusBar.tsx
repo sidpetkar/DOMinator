@@ -1,4 +1,5 @@
 import { useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
+import { FIGMA_MARK_URL } from '@/shared/figma'
 import { LOGO_DATA_URL } from '@/shared/logo'
 import * as clipboard from '../core/clipboard'
 import { controller } from '../core/controller'
@@ -150,6 +151,18 @@ export function StatusBar({ snapshot }: { snapshot: EditorSnapshot }) {
           )}
         </Pill>
       )}
+
+      {/* The mark labels the switch beside it: what the switch turns on is the
+          layout of a design tool, and the fastest way to say so is to show one.
+          Decorative, so it is alt-empty and the switch keeps the name. */}
+      <img
+        src={FIGMA_MARK_URL}
+        alt=""
+        width="14"
+        height="14"
+        className="shrink-0"
+        style={{ display: 'block' }}
+      />
 
       {/* The one setting in a bar of actions, so it is the one thing here that
           is not a pill. See Switch.tsx. */}

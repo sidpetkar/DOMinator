@@ -344,6 +344,48 @@ class Controller {
     if (next && !store.get().selected && document.body) this.select(document.body)
   }
 
+  /**
+   * Brings an element into view on the page.
+   *
+   * Only for selections made somewhere other than the canvas — the tree most of
+   * all, where the whole point is reaching things you cannot currently see. A
+   * canvas click never calls this: you clicked what was already in front of you,
+   * and scrolling the page out from under the cursor in response would be the
+   * tool moving the thing you had just pointed at.
+   *
+   * An element already fully on screen is left alone, so clicking down a list of
+   * siblings does not jog the page on every one. Something taller than the
+   * window is aligned to its top rather than centred, because the middle of a
+   * very tall section shows you nothing that identifies it.
+   */
+  reveal(el: HTMLElement): void {
+    const rect = el.getBoundingClientRect()
+    const visible =
+      rect.top >= 0 &&
+      rect.bottom <= window.innerHeight &&
+      rect.left >= 0 &&
+      rect.right <= window.innerWidth
+    if (visible) return
+    /**
+     * Instant, not smooth. A smooth scroll does not survive the editor being
+     * active — measured: with the editor off it lands where it should, with it
+     * on it travels two pixels and stops, whether or not anything is selected
+     * and whether or not the panels are up. Something in the always-on
+     * machinery supersedes the animation, and an animation that is silently
+     * cancelled is worse than none.
+     *
+     * It is also the better interaction for this. Half a second of animated
+     * scrolling means half a second of the selection frame chasing the element
+     * down the screen, and clicking a layer to go to it is a navigation, not a
+     * transition.
+     */
+    el.scrollIntoView({
+      block: rect.height > window.innerHeight ? 'start' : 'center',
+      inline: 'nearest',
+      behavior: 'auto',
+    })
+  }
+
   /** Folds a docked panel down to its title bar, or back open. */
   foldPanel(which: 'tree' | 'controls'): void {
     const { collapsed } = store.get()
