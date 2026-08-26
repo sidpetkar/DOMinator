@@ -73,7 +73,22 @@ import {
   UngroupIcon,
   WrapIcon,
 } from './icons'
-import { cx, zoomStable } from './util'
+import { cx, useFadingScroll, zoomStable } from './util'
+
+/**
+ * How tall a docked panel may be, in its own (pre-counter-scale) pixels.
+ *
+ * The panel is counter-scaled by 1/zoom so it holds a constant physical size,
+ * which means its footprint on screen is `height / zoom` — so a plain
+ * `calc(100vh - 86px)` would overflow the window by exactly the zoom factor the
+ * moment anyone zoomed out. The height it is *given* has to be divided by the
+ * same number its footprint is multiplied by.
+ *
+ * The 12 is the unscaled top offset, which a transform does not move; the 62 is
+ * the room the status bar's own counter-scaled footprint needs at the bottom.
+ */
+const dockedHeight = (scale: number): number =>
+  Math.max(200, (window.innerHeight - 12) * scale - 62)
 
 const BAR_HEIGHT = 32
 const COLOR_PANEL_HEIGHT = 220
@@ -619,6 +634,8 @@ export function ElementBar({ node, docked = false }: { node: Node; docked?: bool
   )
 
   const shut = Boolean(store.get().collapsed.controls)
+  const dockRef = useRef<HTMLDivElement>(null)
+  useFadingScroll(dockRef, docked && !shut)
 
   if (docked) {
     return (
@@ -630,9 +647,11 @@ export function ElementBar({ node, docked = false }: { node: Node; docked?: bool
             right: 12,
             top: 12,
             width: 264,
-            // Same as the tree: as tall as it needs to be, never taller.
-            maxHeight: 'calc(100vh - 86px)',
+            // Same as the tree: as tall as it needs to be, never taller, and the
+            // same constant physical size at any browser zoom.
+            maxHeight: dockedHeight(scale),
             borderRadius: 14,
+            ...zoomStable(zoom(), 'top right'),
           }}
         >
           <div className="flex items-center gap-1.5 border-b border-line px-2.5 py-1.5">
@@ -650,7 +669,10 @@ export function ElementBar({ node, docked = false }: { node: Node; docked?: bool
             />
           </div>
           {!shut && (
-            <div className="min-h-0 flex-1 divide-y divide-line overflow-x-hidden overflow-y-auto">
+            <div
+              ref={dockRef}
+              className="dm-scroll min-h-0 flex-1 divide-y divide-line overflow-x-hidden overflow-y-auto"
+            >
               {sections}
             </div>
           )}

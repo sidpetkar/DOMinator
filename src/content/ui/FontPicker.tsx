@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { FontMeta } from '@/shared/messages'
 import { loadCatalogue, loadPreview, previewFamily } from '../core/fonts'
-import { cx } from './util'
+import { cx, useFadingScroll } from './util'
 import { SearchIcon } from './icons'
 
 /** Survives close/reopen — and remount — so a search isn't retyped. */
@@ -44,10 +44,7 @@ export function FontPicker({
     if (open && !fonts.length) void loadCatalogue().then(setFonts)
   }, [open, fonts.length])
 
-  const applied = useMemo(
-    () => fonts.find((font) => font.family === value) ?? null,
-    [fonts, value],
-  )
+  const applied = useMemo(() => fonts.find((font) => font.family === value) ?? null, [fonts, value])
 
   const results = useMemo(() => {
     const needle = query.trim().toLowerCase()
@@ -65,7 +62,9 @@ export function FontPicker({
 
   const total = useMemo(() => {
     const needle = query.trim().toLowerCase()
-    return needle ? fonts.filter((f) => f.family.toLowerCase().includes(needle)).length : fonts.length
+    return needle
+      ? fonts.filter((f) => f.family.toLowerCase().includes(needle)).length
+      : fonts.length
   }, [fonts, query])
 
   // Load a row's preview face the first time it is actually on screen.
@@ -99,15 +98,7 @@ export function FontPicker({
   }, [open, results.length])
 
   // Scrollbar fades back out once scrolling stops (see .dm-scroll in overlay.css).
-  const idleTimer = useRef(0)
-  const onScroll = () => {
-    const list = listRef.current
-    if (!list) return
-    list.classList.add('is-scrolling')
-    window.clearTimeout(idleTimer.current)
-    idleTimer.current = window.setTimeout(() => list.classList.remove('is-scrolling'), 700)
-  }
-  useEffect(() => () => window.clearTimeout(idleTimer.current), [])
+  useFadingScroll(listRef, open)
 
   return (
     <div className="relative">
@@ -116,9 +107,7 @@ export function FontPicker({
         onPointerDown={(event) => event.stopPropagation()}
         onClick={() => setOpen((prev) => !prev)}
         className="flex h-[26px] w-[136px] items-center justify-between rounded-[6px] border border-line bg-paper px-1.5 text-[11px] text-ink"
-        style={
-          value && loaded.has(value) ? { fontFamily: `"${value}", ui-sans-serif` } : undefined
-        }
+        style={value && loaded.has(value) ? { fontFamily: `"${value}", ui-sans-serif` } : undefined}
         title={value || 'Font family'}
       >
         <span className="truncate">{value || 'Font'}</span>
@@ -164,7 +153,6 @@ export function FontPicker({
 
           <div
             ref={listRef}
-            onScroll={onScroll}
             className="dm-scroll overflow-y-auto overscroll-contain"
             style={{ maxHeight }}
           >
@@ -221,4 +209,3 @@ export function FontPicker({
     </div>
   )
 }
-

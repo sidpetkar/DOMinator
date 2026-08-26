@@ -21,11 +21,7 @@ export const cx = (...parts: (string | false | null | undefined)[]): string =>
  * more of the page. The anchor point is unaffected; only the panel's own scale
  * is compensated, which is why the origin matters.
  */
-export function zoomStable(
-  zoom: number,
-  origin: string,
-  extraTransform = '',
-): CSSProperties {
+export function zoomStable(zoom: number, origin: string, extraTransform = ''): CSSProperties {
   const scale = 1 / (zoom || 1)
   return {
     transform: `${extraTransform} scale(${scale})`.trim(),
@@ -66,4 +62,37 @@ export function useDismiss(
     window.addEventListener('pointerdown', onDown, true)
     return () => window.removeEventListener('pointerdown', onDown, true)
   }, [ref, active, onDismiss])
+}
+
+/**
+ * Keeps a scrollable pane's scrollbar visible while it is being used and lets it
+ * dissolve once it isn't (see `.dm-scroll` in overlay.css).
+ *
+ * The CSS half can only key off `:hover`, which is the wrong signal: a pane you
+ * are scrolling with a wheel or a trackpad often has the pointer nowhere near
+ * its edge, and one you are merely passing over does not need a scrollbar at
+ * all. The class this toggles is what makes it "while scrolling" rather than
+ * "while hovering".
+ *
+ * `enabled` exists because the panes this runs on are unmounted when their panel
+ * is folded away: without it the effect binds once to a ref that is still null
+ * and never rebinds when the pane comes back.
+ */
+export function useFadingScroll(ref: RefObject<HTMLElement | null>, enabled = true): void {
+  useEffect(() => {
+    const pane = ref.current
+    if (!enabled || !pane) return
+    let idle = 0
+    const onScroll = () => {
+      pane.classList.add('is-scrolling')
+      window.clearTimeout(idle)
+      idle = window.setTimeout(() => pane.classList.remove('is-scrolling'), 700)
+    }
+    pane.addEventListener('scroll', onScroll, { passive: true })
+    return () => {
+      pane.removeEventListener('scroll', onScroll)
+      window.clearTimeout(idle)
+      pane.classList.remove('is-scrolling')
+    }
+  }, [ref, enabled])
 }

@@ -3,6 +3,7 @@ import { OWN_NODE_ATTR } from '@/shared/constants'
 import { controller } from '../core/controller'
 import { startDrag } from '../core/drag'
 import { nodeOf, store, type EditorSnapshot } from '../core/store'
+import { zoom } from '../core/zoom'
 import {
   ancestry,
   applyDrop,
@@ -15,7 +16,22 @@ import {
 } from '../core/tree'
 import { SearchIcon } from './icons'
 import { PanelCollapse } from './PanelCollapse'
-import { cx } from './util'
+import { cx, useFadingScroll, zoomStable } from './util'
+
+/**
+ * How tall a docked panel may be, in its own (pre-counter-scale) pixels.
+ *
+ * The panel is counter-scaled by 1/zoom so it holds a constant physical size,
+ * which means its footprint on screen is `height / zoom` — so a plain
+ * `calc(100vh - 86px)` would overflow the window by exactly the zoom factor the
+ * moment anyone zoomed out. The height it is *given* has to be divided by the
+ * same number its footprint is multiplied by.
+ *
+ * The 12 is the unscaled top offset, which a transform does not move; the 62 is
+ * the room the status bar's own counter-scaled footprint needs at the bottom.
+ */
+const dockedHeight = (scale: number): number =>
+  Math.max(200, (window.innerHeight - 12) * scale - 62)
 
 const ROW_HEIGHT = 22
 const INDENT = 11
@@ -43,6 +59,11 @@ export function LayerTree({ snapshot }: { snapshot: EditorSnapshot }) {
   const listRef = useRef<HTMLDivElement>(null)
   const collapsed = Boolean(snapshot.collapsed.tree)
   const fold = (which: 'tree' | 'controls') => controller.foldPanel(which)
+  // Held at a constant physical size, exactly as the floating bars are: zooming
+  // out to see more of the page is the moment the panels most need to stay
+  // legible, and it was the moment they used to shrink.
+  const z = zoom() || 1
+  useFadingScroll(listRef, !collapsed)
 
   /**
    * The path to the selection opens itself. Selecting on the canvas and then
@@ -172,8 +193,9 @@ export function LayerTree({ snapshot }: { snapshot: EditorSnapshot }) {
         // Hugs its rows rather than reaching for the bottom of the window. A
         // panel that is always full height is mostly empty on a short page, and
         // that empty half is still covering the page underneath it.
-        maxHeight: 'calc(100vh - 86px)',
+        maxHeight: dockedHeight(z),
         borderRadius: 14,
+        ...zoomStable(z, 'top left'),
       }}
     >
       <div className="flex items-center gap-1.5 border-b border-line px-2.5 py-1.5">
@@ -205,7 +227,10 @@ export function LayerTree({ snapshot }: { snapshot: EditorSnapshot }) {
 
       {!collapsed && (
         <>
-          <div ref={listRef} className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto py-1">
+          <div
+            ref={listRef}
+            className="dm-scroll min-h-0 flex-1 overflow-x-hidden overflow-y-auto py-1"
+          >
             {rows}
           </div>
 
