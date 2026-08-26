@@ -14,6 +14,7 @@ import {
   type TreeDrop,
 } from '../core/tree'
 import { SearchIcon } from './icons'
+import { PanelCollapse } from './PanelCollapse'
 import { cx } from './util'
 
 const ROW_HEIGHT = 22
@@ -40,6 +41,8 @@ export function LayerTree({ snapshot }: { snapshot: EditorSnapshot }) {
   const [query, setQuery] = useState('')
   const [drag, setDrag] = useState<{ el: HTMLElement; drop: TreeDrop | null } | null>(null)
   const listRef = useRef<HTMLDivElement>(null)
+  const collapsed = Boolean(snapshot.collapsed.tree)
+  const fold = (which: 'tree' | 'controls') => controller.foldPanel(which)
 
   /**
    * The path to the selection opens itself. Selecting on the canvas and then
@@ -165,13 +168,20 @@ export function LayerTree({ snapshot }: { snapshot: EditorSnapshot }) {
         position: 'fixed',
         left: 12,
         top: 12,
-        bottom: 62,
         width: 252,
+        // Hugs its rows rather than reaching for the bottom of the window. A
+        // panel that is always full height is mostly empty on a short page, and
+        // that empty half is still covering the page underneath it.
+        maxHeight: 'calc(100vh - 86px)',
         borderRadius: 14,
       }}
     >
-      <div className="flex items-center gap-1.5 border-b border-line px-2.5 py-2">
-        <SearchIcon />
+      <div className="flex items-center gap-1.5 border-b border-line px-2.5 py-1.5">
+        {/* `shrink-0`, which is the whole reason it was invisible: a 12px SVG in
+            a flex row next to a `flex-1` input is compressed to nothing. */}
+        <span className="flex shrink-0 items-center text-ink-soft">
+          <SearchIcon />
+        </span>
         <input
           value={query}
           onChange={(event) => setQuery(event.target.value)}
@@ -190,19 +200,27 @@ export function LayerTree({ snapshot }: { snapshot: EditorSnapshot }) {
             ×
           </button>
         )}
+        <PanelCollapse collapsed={collapsed} label="the layer tree" onToggle={() => fold('tree')} />
       </div>
 
-      <div ref={listRef} className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden py-1">
-        {rows}
-      </div>
+      {!collapsed && (
+        <>
+          <div ref={listRef} className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto py-1">
+            {rows}
+          </div>
 
-      <div className="border-t border-line px-2.5 py-1 text-[9px] leading-tight text-ink-soft">
-        {drag
-          ? drag.drop
-            ? `${drag.drop.where === 'inside' ? 'Into' : drag.drop.where === 'before' ? 'Above' : 'Below'} ${label(drag.drop.target)}`
-            : 'Nowhere to drop that'
-          : 'Drag a row to move the element · click to select'}
-      </div>
+          {/* Only while a drag is in flight. The standing hint it replaced was a
+              permanent line of text explaining a gesture you have to already be
+              making to need it — and it was the bottom half of the whitespace. */}
+          {drag && (
+            <div className="border-t border-line px-2.5 py-1 text-[9px] leading-tight text-ink-soft">
+              {drag.drop
+                ? `${drag.drop.where === 'inside' ? 'Into' : drag.drop.where === 'before' ? 'Above' : 'Below'} ${label(drag.drop.target)}`
+                : 'Nowhere to drop that'}
+            </div>
+          )}
+        </>
+      )}
     </div>
   )
 }
@@ -283,6 +301,7 @@ function Row({
       )}
       style={{ paddingLeft: 6 + depth * INDENT, minHeight: ROW_HEIGHT }}
     >
+      <Guides depth={depth} selected={selected} />
       {/* The landing line, drawn on the row it lands against — a rule at the
           edge for an ordering, a ring around the whole row for a nesting. */}
       {drop === 'before' && <Edge side="top" />}
@@ -333,6 +352,65 @@ function Row({
         </span>
       )}
     </div>
+  )
+}
+
+/**
+ * The dotted rules that make the nesting legible.
+ *
+ * No library. Every tree component that ships these also ships its own data
+ * model, its own virtualiser and its own selection and drag handling — all of
+ * which this panel already has and none of which would agree with the ones it
+ * has. What is actually wanted is a vertical line per level of indent, and that
+ * is what this is.
+ *
+ * Painted as a repeating gradient rather than a dotted border. A 1px dotted
+ * border lands on 0.8 of a device pixel at most zoom levels and the browser
+ * quietly renders it at a fraction of the requested alpha — which is exactly
+ * what happened the first time: the lines were all there in the DOM, correct
+ * to the pixel, and invisible on screen.
+ *
+ * They are drawn per row rather than as one continuous overlay, which is what
+ * makes them continuous: consecutive rows at the same depth each paint their own
+ * segment edge-to-edge, and the segments meet. A single absolutely-positioned
+ * ruler would have to know where each run of siblings starts and ends, which is
+ * a thing the flat list deliberately does not track.
+ *
+ * On the selected row they turn pale rather than disappearing — a gap in the
+ * ladder is more distracting than the ladder.
+ */
+function Guides({ depth, selected }: { depth: number; selected: boolean }) {
+  const tint = selected ? 'rgba(255,255,255,.5)' : 'rgba(11,11,12,.32)'
+  return (
+    <>
+      {Array.from({ length: depth }, (_, level) => (
+        <span
+          key={level}
+          aria-hidden
+          className="pointer-events-none absolute top-0 bottom-0"
+          style={{
+            left: 11 + level * INDENT,
+            width: 1,
+            backgroundImage: `repeating-linear-gradient(to bottom, ${tint} 0 2px, transparent 2px 4px)`,
+          }}
+        />
+      ))}
+      {/* The elbow into this row, so a row reads as hanging off its parent's
+          line rather than merely sitting near it. */}
+      {depth > 0 && (
+        <span
+          aria-hidden
+          className="pointer-events-none absolute"
+          style={{
+            left: 11 + (depth - 1) * INDENT,
+            top: '50%',
+            height: 1,
+            width: INDENT - 3,
+            backgroundImage: `repeating-linear-gradient(to right, ${tint} 0 2px, transparent 2px 4px)`,
+          }}
+        />
+      )}
+    </>
   )
 }
 

@@ -47,6 +47,7 @@ import { clearStyle } from '../core/styles'
 import { store, type BoxGroup, type Node } from '../core/store'
 import { zoom } from '../core/zoom'
 import { ColorPicker } from './ColorPicker'
+import { PanelCollapse } from './PanelCollapse'
 import { PanelGrip, usePanelDrag } from './PanelGrip'
 import { NumberField } from './NumberField'
 import { ExpandGroup } from './ExpandGroup'
@@ -280,6 +281,62 @@ export function ElementBar({ node, docked = false }: { node: Node; docked?: bool
    */
   const sections = (
     <>
+      {/* — position: no folded state, because there is nothing to summarise.
+          Four unrelated verbs, not four parts of one number. */}
+      <Section title="Position">
+        <NumberField
+          compact
+          label="rotation"
+          title="Rotation — drag to scrub, double-click to type"
+          icon={<RotationIcon />}
+          value={position.rotation}
+          step={15}
+          min={-Infinity}
+          suffix="°"
+          onGesture={settle}
+          onChange={(next) => live(() => setRotation(node.el, next))}
+        />
+        <Toggle
+          label="Turn a quarter clockwise"
+          onClick={act(() => setRotation(node.el, position.rotation + 90))}
+        >
+          <RotateStepIcon />
+        </Toggle>
+        <Toggle
+          label="Flip horizontally"
+          active={position.flipX}
+          onClick={act(() => setFlip(node.el, 'x', !position.flipX))}
+        >
+          <FlipIcon axis="row" />
+        </Toggle>
+        <Toggle
+          label="Flip vertically"
+          active={position.flipY}
+          onClick={act(() => setFlip(node.el, 'y', !position.flipY))}
+        >
+          <FlipIcon axis="column" />
+        </Toggle>
+      </Section>
+
+      <Section title="Size">
+        <NumberField
+          label="W"
+          value={Math.round(rect.width)}
+          step={1}
+          min={0}
+          title="Width in px — the box as drawn, border included"
+          onChange={(next) => act(() => setSize(node.el, 'width', next))()}
+        />
+        <NumberField
+          label="H"
+          value={Math.round(rect.height)}
+          step={1}
+          min={0}
+          title="Height in px — the box as drawn, border included"
+          onChange={(next) => act(() => setSize(node.el, 'height', next))()}
+        />
+      </Section>
+
       {/* A group has no purpose beyond holding its children, so the way back out
           belongs next to the controls that are the reason it was made. */}
       {grouped && (
@@ -385,25 +442,6 @@ export function ElementBar({ node, docked = false }: { node: Node; docked?: bool
        * Each axis is written on its own, so setting a width leaves the height to
        * the content rather than quietly freezing both.
        */}
-      <Section title="Size">
-        <NumberField
-          label="W"
-          value={Math.round(rect.width)}
-          step={1}
-          min={0}
-          title="Width in px — the box as drawn, border included"
-          onChange={(next) => act(() => setSize(node.el, 'width', next))()}
-        />
-        <NumberField
-          label="H"
-          value={Math.round(rect.height)}
-          step={1}
-          min={0}
-          title="Height in px — the box as drawn, border included"
-          onChange={(next) => act(() => setSize(node.el, 'height', next))()}
-        />
-      </Section>
-
       <Section title="Fill">
         <div className="relative">
           <Toggle
@@ -550,7 +588,7 @@ export function ElementBar({ node, docked = false }: { node: Node; docked?: bool
         </ExpandGroup>
       </Section>
 
-      <Section title="Shadow">
+      <Section title="Shadow" last>
         {/* — shadow — */}
         <Toggle
           label={shadow.on ? 'Shadow — click to open its settings' : 'Add a drop shadow'}
@@ -577,45 +615,10 @@ export function ElementBar({ node, docked = false }: { node: Node; docked?: bool
           />
         </ExpandGroup>
       </Section>
-
-      {/* — position: no folded state, because there is nothing to summarise.
-          Four unrelated verbs, not four parts of one number. */}
-      <Section title="Position" last>
-        <NumberField
-          compact
-          label="rotation"
-          title="Rotation — drag to scrub, double-click to type"
-          icon={<RotationIcon />}
-          value={position.rotation}
-          step={15}
-          min={-Infinity}
-          suffix="°"
-          onGesture={settle}
-          onChange={(next) => live(() => setRotation(node.el, next))}
-        />
-        <Toggle
-          label="Turn a quarter clockwise"
-          onClick={act(() => setRotation(node.el, position.rotation + 90))}
-        >
-          <RotateStepIcon />
-        </Toggle>
-        <Toggle
-          label="Flip horizontally"
-          active={position.flipX}
-          onClick={act(() => setFlip(node.el, 'x', !position.flipX))}
-        >
-          <FlipIcon axis="row" />
-        </Toggle>
-        <Toggle
-          label="Flip vertically"
-          active={position.flipY}
-          onClick={act(() => setFlip(node.el, 'y', !position.flipY))}
-        >
-          <FlipIcon axis="column" />
-        </Toggle>
-      </Section>
     </>
   )
+
+  const shut = Boolean(store.get().collapsed.controls)
 
   if (docked) {
     return (
@@ -626,12 +629,13 @@ export function ElementBar({ node, docked = false }: { node: Node; docked?: bool
             position: 'fixed',
             right: 12,
             top: 12,
-            bottom: 62,
             width: 264,
+            // Same as the tree: as tall as it needs to be, never taller.
+            maxHeight: 'calc(100vh - 86px)',
             borderRadius: 14,
           }}
         >
-          <div className="flex items-center gap-1.5 border-b border-line px-2.5 py-2">
+          <div className="flex items-center gap-1.5 border-b border-line px-2.5 py-1.5">
             <span
               className="min-w-0 flex-1 truncate text-[11px] font-medium text-ink"
               style={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}
@@ -639,10 +643,17 @@ export function ElementBar({ node, docked = false }: { node: Node; docked?: bool
             >
               {describe(node.el)}
             </span>
+            <PanelCollapse
+              collapsed={shut}
+              label="the controls"
+              onToggle={() => controller.foldPanel('controls')}
+            />
           </div>
-          <div className="min-h-0 flex-1 divide-y divide-line overflow-x-hidden overflow-y-auto">
-            {sections}
-          </div>
+          {!shut && (
+            <div className="min-h-0 flex-1 divide-y divide-line overflow-x-hidden overflow-y-auto">
+              {sections}
+            </div>
+          )}
         </div>
       </Docked.Provider>
     )

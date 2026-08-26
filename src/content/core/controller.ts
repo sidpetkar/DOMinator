@@ -181,7 +181,15 @@ class Controller {
   standDown(): boolean {
     const { editing, selected, extras, hovered, xray, lens, shot, adaOpen, shotOpen } = store.get()
     const busy = Boolean(
-      editing || selected || extras.length || hovered || xray || lens || shot || adaOpen || shotOpen,
+      editing ||
+      selected ||
+      extras.length ||
+      hovered ||
+      xray ||
+      lens ||
+      shot ||
+      adaOpen ||
+      shotOpen,
     )
     if (!busy) return false
 
@@ -334,6 +342,12 @@ class Controller {
     const next = !store.get().layers
     store.set({ layers: next })
     if (next && !store.get().selected && document.body) this.select(document.body)
+  }
+
+  /** Folds a docked panel down to its title bar, or back open. */
+  foldPanel(which: 'tree' | 'controls'): void {
+    const { collapsed } = store.get()
+    store.set({ collapsed: { ...collapsed, [which]: !collapsed[which] } })
   }
 
   /** Folds the two capture buttons out from behind the camera, and back. */

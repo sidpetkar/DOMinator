@@ -86,6 +86,16 @@ export interface EditorSnapshot {
    */
   layers: boolean
   /**
+   * Which docked panel is folded down to just its title bar.
+   *
+   * Both of them earn a collapse for the same reason and it is not screen room:
+   * the tree and the controls are each occasionally the only one you are using,
+   * and the other is then a wall of detail beside the page you are trying to
+   * look at. Folded, a panel is one bar you can still see the title of, which is
+   * how you get it back.
+   */
+  collapsed: Partial<Record<'tree' | 'controls', boolean>>
+  /**
    * Which element-bar groups are unfolded into their four parts.
    *
    * Kept here rather than in the bar's own state because it is a preference
@@ -144,6 +154,7 @@ const EMPTY: EditorSnapshot = {
   adaOpen: false,
   shotOpen: false,
   layers: false,
+  collapsed: {},
   expanded: {},
   lens: null,
   undoDepth: 0,
