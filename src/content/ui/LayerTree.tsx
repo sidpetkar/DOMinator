@@ -17,22 +17,7 @@ import {
 } from '../core/tree'
 import { SearchIcon } from './icons'
 import { PanelCollapse } from './PanelCollapse'
-import { cx, useFadingScroll, zoomStable } from './util'
-
-/**
- * How tall a docked panel may be, in its own (pre-counter-scale) pixels.
- *
- * The panel is counter-scaled by 1/zoom so it holds a constant physical size,
- * which means its footprint on screen is `height / zoom` — so a plain
- * `calc(100vh - 86px)` would overflow the window by exactly the zoom factor the
- * moment anyone zoomed out. The height it is *given* has to be divided by the
- * same number its footprint is multiplied by.
- *
- * The 12 is the unscaled top offset, which a transform does not move; the 62 is
- * the room the status bar's own counter-scaled footprint needs at the bottom.
- */
-const dockedHeight = (scale: number): number =>
-  Math.max(200, (window.innerHeight - 12) * scale - 62)
+import { cx, dockedBox, useFadingScroll, zoomStable } from './util'
 
 const ROW_HEIGHT = 22
 const INDENT = 11
@@ -208,7 +193,7 @@ export function LayerTree({ snapshot }: { snapshot: EditorSnapshot }) {
         // Hugs its rows rather than reaching for the bottom of the window. A
         // panel that is always full height is mostly empty on a short page, and
         // that empty half is still covering the page underneath it.
-        maxHeight: dockedHeight(z),
+        ...dockedBox(z, snapshot.layers),
         borderRadius: 14,
         ...zoomStable(z, 'top left'),
       }}

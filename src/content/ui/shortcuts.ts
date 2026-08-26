@@ -67,7 +67,11 @@ export const SHORTCUT_GROUPS: { title: string; items: [string, string][] }[] = [
   {
     title: 'Tools',
     items: [
-      ['Panels switch', 'Layer tree left, controls right'],
+      ['Panels switch', 'The page on a canvas, panels either side'],
+      ['Pinch · Ctrl + wheel', 'Zoom the canvas about the cursor'],
+      ['Two fingers · Shift + drag', 'Pan the canvas'],
+      ['Space + drag', 'Pan, from anywhere on the page'],
+      ['Click the surface', 'Deselect'],
       ['Drag a tree row', 'Move the element into another container'],
       ['S, S', 'Screenshot a region'],
       ['Camera', 'A region, or the whole page in one click'],

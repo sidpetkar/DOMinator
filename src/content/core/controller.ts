@@ -1,11 +1,12 @@
 import { OWN_NODE_ATTR } from '@/shared/constants'
 import { auditAlt, auditAria, auditContrast, auditTabOrder } from './audit'
 import * as clipboard from './clipboard'
-import { consumedByDrag } from './drag'
+import { consumedByDrag, startDrag } from './drag'
 import { describe } from './geometry'
 import * as history from './history'
 import { commitShift, findShift } from './reorder'
 import { setBackground } from './box'
+import * as canvas from './canvas'
 import { clearStyle, editedCount, revertAll, setStyle } from './styles'
 import { setXray } from './xray'
 import { watchZoom } from './zoom'
@@ -118,6 +119,15 @@ class Controller {
     window.addEventListener('dblclick', this.onDoubleClick, opts)
     window.addEventListener('keydown', this.onKeyDown, opts)
     window.addEventListener('paste', this.onPaste, opts)
+    window.addEventListener('keyup', this.onKeyUp, opts)
+    /**
+     * Not passive, and that is the whole point: on the canvas the wheel is how
+     * you pan and zoom, so its default has to be preventable. It is registered
+     * whether or not the canvas is on — the handler returns immediately when it
+     * is off, which is cheaper than adding and removing a listener every time
+     * the switch is flipped.
+     */
+    window.addEventListener('wheel', this.onWheel, { capture: true, passive: false })
     for (const type of FROZEN) window.addEventListener(type, this.freeze, opts)
     window.addEventListener('scroll', this.onViewportChange, { capture: true, passive: true })
     window.addEventListener('resize', this.onViewportChange, { passive: true })
@@ -137,6 +147,8 @@ class Controller {
     window.removeEventListener('dblclick', this.onDoubleClick, opts)
     window.removeEventListener('keydown', this.onKeyDown, opts)
     window.removeEventListener('paste', this.onPaste, opts)
+    window.removeEventListener('keyup', this.onKeyUp, opts)
+    window.removeEventListener('wheel', this.onWheel, { capture: true })
     for (const type of FROZEN) window.removeEventListener(type, this.freeze, opts)
     window.removeEventListener('scroll', this.onViewportChange, opts)
     window.removeEventListener('resize', this.onViewportChange)
@@ -148,6 +160,8 @@ class Controller {
     this.stopEditing()
     setXray(false)
     this.stopLensWatch()
+    canvas.exit()
+    this.spaceHeld = false
     history.clear()
     store.reset()
   }
@@ -272,6 +286,17 @@ class Controller {
     // Let the host page keep caret handling while a text node is being edited.
     if (editing?.contains(event.target as Node)) return
     event.preventDefault()
+
+    /**
+     * Panning outranks selecting. Held with a threshold, so a shift-*click* still
+     * adds to the selection and only a shift-*drag* moves the view — the trailing
+     * click of a real drag is swallowed by consumedByDrag() as it is everywhere
+     * else in the product.
+     */
+    if (canvas.active() && (event.shiftKey || this.spaceHeld || event.button === 1)) {
+      this.beginPan(event)
+      return
+    }
     if (interaction !== 'idle' || event.button !== 0) return
 
     // Dragging anywhere inside the current selection moves it (PRD §3.4) —
@@ -293,7 +318,16 @@ class Controller {
     // The click that closes a drag belongs to the drag, not to selection.
     if (consumedByDrag()) return
     const target = resolveTarget(event, store.get().selected?.el ?? null)
-    if (!target) return
+    if (!target) {
+      /**
+       * Nothing under the cursor. Off the canvas that is a click on some part of
+       * the page we never select — the html or body box — and is rightly
+       * ignored. On the canvas it is a click on the empty surface around the
+       * frame, which in any design tool means "deselect".
+       */
+      if (canvas.active() && !event.shiftKey) this.select(null)
+      return
+    }
     if (event.shiftKey) this.toggleInSelection(target)
     else this.select(target)
   }
@@ -340,6 +374,8 @@ class Controller {
    */
   toggleLayers(): void {
     const next = !store.get().layers
+    if (next) canvas.enter()
+    else canvas.exit()
     store.set({ layers: next })
     if (next && !store.get().selected && document.body) this.select(document.body)
   }
@@ -359,6 +395,12 @@ class Controller {
    * very tall section shows you nothing that identifies it.
    */
   reveal(el: HTMLElement): void {
+    // On the canvas the document does not scroll at all, so "go to it" means
+    // moving the view rather than the page.
+    if (canvas.active()) {
+      canvas.reveal(el)
+      return
+    }
     const rect = el.getBoundingClientRect()
     const visible =
       rect.top >= 0 &&
@@ -384,6 +426,19 @@ class Controller {
       inline: 'nearest',
       behavior: 'auto',
     })
+  }
+
+  /**
+   * The zoom button: 100%, then fit, then 100% again.
+   *
+   * Two zooms rather than a menu of them. Life size is where you edit and fit is
+   * where you look at the whole thing, and every other value on the way between
+   * them is better reached with the wheel than picked off a list.
+   */
+  stepZoom(): void {
+    if (!canvas.active()) return
+    if (Math.abs(canvas.scale() - 1) < 0.01) canvas.fit()
+    else canvas.zoomTo(1)
   }
 
   /** Folds a docked panel down to its title bar, or back open. */
@@ -988,6 +1043,20 @@ class Controller {
       }
     }
 
+    /**
+     * Space arms the pan. It is already prevented from scrolling the page by the
+     * catch-all at the end of this handler; what is added here is the held state
+     * and the cursor that advertises it.
+     */
+    if (event.code === 'Space' && canvas.active() && !editing) {
+      this.swallow(event)
+      if (!this.spaceHeld) {
+        this.spaceHeld = true
+        document.documentElement.style.setProperty('cursor', 'grab', 'important')
+      }
+      return
+    }
+
     // Shift+A — Figma's auto-layout key, doing the same job here: give these
     // elements a parent so they can be stacked and aligned.
     if (key === 'a' && event.shiftKey && !accel && !event.altKey && !editing && selected) {
@@ -1041,6 +1110,59 @@ class Controller {
      */
     if (editing || event.ctrlKey || event.metaKey || /^F\d+$/.test(event.key)) return
     this.swallow(event)
+  }
+
+  /**
+   * The canvas's one input surface.
+   *
+   * A trackpad pinch arrives as a wheel event with `ctrlKey` set — the browser
+   * has synthesised it that way since long before anyone wanted it to, and it is
+   * why pinch-to-zoom needs no separate gesture handling. Two fingers on the pad
+   * arrive as a plain wheel with both deltas, which is a pan.
+   *
+   * `deltaMode` is respected because a real mouse wheel on Windows reports lines
+   * rather than pixels, and treating three lines as three pixels makes a mouse
+   * wheel feel broken next to a trackpad.
+   */
+  private onWheel = (event: WheelEvent): void => {
+    if (!canvas.active() || isOwnNode(event.target)) return
+    event.preventDefault()
+    event.stopPropagation()
+
+    const unit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? window.innerHeight : 1
+    if (event.ctrlKey || event.metaKey) {
+      // Exponential, so a notch is the same proportional step at every zoom.
+      canvas.zoomAt(event.clientX, event.clientY, Math.exp((-event.deltaY * unit) / 400))
+      return
+    }
+    canvas.panBy(-event.deltaX * unit, -event.deltaY * unit)
+  }
+
+  /**
+   * Space is held down. Tracked rather than read off the event because the
+   * cursor has to say "you can grab this" *before* the drag starts, which is a
+   * moment at which there is no drag to ask.
+   */
+  private spaceHeld = false
+
+  private onKeyUp = (event: KeyboardEvent): void => {
+    if (event.code === 'Space' && this.spaceHeld) {
+      this.spaceHeld = false
+      document.documentElement.style.removeProperty('cursor')
+    }
+  }
+
+  /** Shift, Space or the middle button, dragged: move the view. */
+  private beginPan = (event: PointerEvent): void => {
+    const from = canvas.transform()
+    startDrag(event, {
+      cursor: 'grabbing',
+      threshold: 3,
+      onMove: (drag) => {
+        const now = canvas.transform()
+        canvas.panBy(from.x + drag.dx - now.x, from.y + drag.dy - now.y)
+      },
+    })
   }
 
   private swallow = (event: Event): void => {

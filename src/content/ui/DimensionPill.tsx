@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react'
+import { scale as canvasScale } from '../core/canvas'
 import type { Rect } from '../core/geometry'
 
 /** Same rule as the bar's number fields: blue is the value, grey is the label. */
@@ -32,7 +33,8 @@ export function DimensionPill({ rect }: { rect: Rect }) {
       className="dm-panel absolute px-1.5 py-[2px] text-[10px] font-medium whitespace-nowrap text-ink-soft tabular-nums"
       style={{ top: '100%', left: '50%', marginTop: 20, transform: 'translateX(-50%)' }}
     >
-      W <Value>{Math.round(rect.width)}</Value>px × H <Value>{Math.round(rect.height)}</Value>px
+      W <Value>{Math.round(rect.width / canvasScale())}</Value>px × H{' '}
+      <Value>{Math.round(rect.height / canvasScale())}</Value>px
     </span>
   )
 }

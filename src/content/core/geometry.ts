@@ -1,3 +1,5 @@
+import { scale as canvasScale } from './canvas'
+
 /** Viewport-space rect. The overlay host is position:fixed, so these map 1:1. */
 export interface Rect {
   top: number
@@ -28,23 +30,33 @@ const num = (value: string): number => {
   return Number.isFinite(n) ? n : 0
 }
 
-function edges(style: CSSStyleDeclaration, prefix: string, suffix = ''): Edges {
-  return {
-    top: num(style.getPropertyValue(`${prefix}-top${suffix}`)),
-    right: num(style.getPropertyValue(`${prefix}-right${suffix}`)),
-    bottom: num(style.getPropertyValue(`${prefix}-bottom${suffix}`)),
-    left: num(style.getPropertyValue(`${prefix}-left${suffix}`)),
-  }
+function edges(style: CSSStyleDeclaration, prefix: string, suffix = '', scale = 1): Edges {
+  const read = (side: string) => num(style.getPropertyValue(`${prefix}-${side}${suffix}`)) * scale
+  return { top: read('top'), right: read('right'), bottom: read('bottom'), left: read('left') }
 }
 
+/**
+ * The one place in the product where two coordinate systems meet.
+ *
+ * `rect` comes from `getBoundingClientRect()`, which is screen space and so
+ * already carries the canvas zoom. The three sets of edges come from computed
+ * style, which is CSS pixels and does not. Left alone, a 20px padding on an
+ * element drawn at half size would be banded twenty pixels thick over a box
+ * that is only ten — the overlay would describe a box nobody is looking at.
+ *
+ * Scaling them here fixes every overlay at once, because every overlay reads
+ * its geometry from this function. Off the canvas `scale()` is 1 and this is
+ * a multiplication by one.
+ */
 export function measure(el: Element): Metrics {
   const box = el.getBoundingClientRect()
   const style = window.getComputedStyle(el)
+  const z = canvasScale()
   return {
     rect: { top: box.top, left: box.left, width: box.width, height: box.height },
-    padding: edges(style, 'padding'),
-    border: edges(style, 'border', '-width'),
-    margin: edges(style, 'margin'),
+    padding: edges(style, 'padding', '', z),
+    border: edges(style, 'border', '-width', z),
+    margin: edges(style, 'margin', '', z),
   }
 }
 

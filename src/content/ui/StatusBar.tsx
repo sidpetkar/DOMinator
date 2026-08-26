@@ -1,6 +1,7 @@
 import { useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { FIGMA_MARK_URL } from '@/shared/figma'
 import { LOGO_DATA_URL } from '@/shared/logo'
+import * as canvas from '../core/canvas'
 import * as clipboard from '../core/clipboard'
 import { controller } from '../core/controller'
 import { editedCount } from '../core/styles'
@@ -150,6 +151,23 @@ export function StatusBar({ snapshot }: { snapshot: EditorSnapshot }) {
             </span>
           )}
         </Pill>
+      )}
+
+      {/* Only on the canvas, because off it this is the browser's zoom and not
+          ours to report. Click steps 100% → fit → 100%, which is the pair of
+          zooms anyone actually wants a button for; the rest is the wheel. */}
+      {snapshot.layers && (
+        <>
+          <Pill
+            label="Zoom"
+            title="Canvas zoom — click for 100%, again to fit the frame. Pinch or Ctrl+wheel to zoom, two fingers or Shift+drag to pan."
+            onClick={() => controller.stepZoom()}
+          >
+            <span className="tabular-nums">{Math.round(canvas.scale() * 100)}%</span>
+          </Pill>
+
+          <span className="dm-divider" />
+        </>
       )}
 
       {/* The mark labels the switch beside it: what the switch turns on is the

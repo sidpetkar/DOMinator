@@ -97,7 +97,16 @@ function mount(): void {
   })
 
   shadow.append(container)
-  document.body.append(host)
+  /**
+   * Appended to the document element, not to `body`.
+   *
+   * Canvas mode puts a transform on `body`, and a transformed element becomes
+   * the containing block for every `position: fixed` descendant — so a host
+   * inside it would pan and zoom along with the page it is supposed to be
+   * floating above. Out here it is unaffected. transfer.ts already mounts its
+   * sandbox iframe the same way, for the same reason.
+   */
+  document.documentElement.append(host)
 
   createRoot(container).render(<App />)
 }

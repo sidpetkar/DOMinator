@@ -27,6 +27,7 @@ import {
   type ShadowInfo,
 } from '../core/effects'
 import { COLORS } from '@/shared/constants'
+import { scale as canvasScale } from '../core/canvas'
 import { cssColor, hexToRgb, parseColor, rgbToHex } from '../core/color'
 import { controller } from '../core/controller'
 import { describe } from '../core/geometry'
@@ -73,22 +74,7 @@ import {
   UngroupIcon,
   WrapIcon,
 } from './icons'
-import { cx, useFadingScroll, zoomStable } from './util'
-
-/**
- * How tall a docked panel may be, in its own (pre-counter-scale) pixels.
- *
- * The panel is counter-scaled by 1/zoom so it holds a constant physical size,
- * which means its footprint on screen is `height / zoom` — so a plain
- * `calc(100vh - 86px)` would overflow the window by exactly the zoom factor the
- * moment anyone zoomed out. The height it is *given* has to be divided by the
- * same number its footprint is multiplied by.
- *
- * The 12 is the unscaled top offset, which a transform does not move; the 62 is
- * the room the status bar's own counter-scaled footprint needs at the bottom.
- */
-const dockedHeight = (scale: number): number =>
-  Math.max(200, (window.innerHeight - 12) * scale - 62)
+import { cx, dockedBox, useFadingScroll, zoomStable } from './util'
 
 const BAR_HEIGHT = 32
 const COLOR_PANEL_HEIGHT = 220
@@ -333,10 +319,13 @@ export function ElementBar({ node, docked = false }: { node: Node; docked?: bool
         </Toggle>
       </Section>
 
+      {/* The element's own size, not its size on screen: `rect` comes from
+          getBoundingClientRect and so carries the canvas zoom, and a card that
+          reads 300 at life size should not read 150 because you zoomed out. */}
       <Section title="Size">
         <NumberField
           label="W"
-          value={Math.round(rect.width)}
+          value={Math.round(rect.width / canvasScale())}
           step={1}
           min={0}
           title="Width in px — the box as drawn, border included"
@@ -344,7 +333,7 @@ export function ElementBar({ node, docked = false }: { node: Node; docked?: bool
         />
         <NumberField
           label="H"
-          value={Math.round(rect.height)}
+          value={Math.round(rect.height / canvasScale())}
           step={1}
           min={0}
           title="Height in px — the box as drawn, border included"
@@ -649,7 +638,7 @@ export function ElementBar({ node, docked = false }: { node: Node; docked?: bool
             width: 264,
             // Same as the tree: as tall as it needs to be, never taller, and the
             // same constant physical size at any browser zoom.
-            maxHeight: dockedHeight(scale),
+            ...dockedBox(scale, true),
             borderRadius: 14,
             ...zoomStable(zoom(), 'top right'),
           }}

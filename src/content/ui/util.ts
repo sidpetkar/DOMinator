@@ -96,3 +96,28 @@ export function useFadingScroll(ref: RefObject<HTMLElement | null>, enabled = tr
     }
   }, [ref, enabled])
 }
+
+/**
+ * How tall a docked panel may be, in its own (pre-counter-scale) pixels.
+ *
+ * The panel is counter-scaled by 1/zoom so it holds a constant physical size,
+ * which means its footprint on screen is `height / zoom` — so a plain
+ * `calc(100vh - 86px)` would overflow the window by exactly the zoom factor the
+ * moment anyone zoomed out. The height it is *given* has to be divided by the
+ * same number its footprint is multiplied by.
+ *
+ * The 12 is the unscaled top offset, which a transform does not move; the 62 is
+ * the room the status bar's own counter-scaled footprint needs at the bottom.
+ *
+ * Returns the room available, not what to do with it. The caller decides: on
+ * the canvas the panels are the window's furniture and take it as a `height`,
+ * running the full height of the screen the way a design tool's panels do; off
+ * it they take it as a `maxHeight` and hug their contents, so a short tree does
+ * not cover half the page for no reason.
+ */
+export const dockedHeight = (scale: number): number =>
+  Math.max(200, (window.innerHeight - 12) * scale - 62)
+
+/** The height rule for a docked panel — filled on the canvas, hugging off it. */
+export const dockedBox = (scale: number, stretch: boolean): CSSProperties =>
+  stretch ? { height: dockedHeight(scale) } : { maxHeight: dockedHeight(scale) }
