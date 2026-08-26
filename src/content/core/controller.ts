@@ -322,6 +322,20 @@ class Controller {
     store.set({ shot: { phase: 'arm', rect: null }, hovered: null })
   }
 
+  /**
+   * The docked layout, on or off.
+   *
+   * Turning it on selects `<body>` if nothing is selected yet, so the right-hand
+   * panel has something to show. An empty panel next to a full tree reads as a
+   * failure to load rather than as "pick something", and the body is the one
+   * element that is always there and always a legitimate thing to be looking at.
+   */
+  toggleLayers(): void {
+    const next = !store.get().layers
+    store.set({ layers: next })
+    if (next && !store.get().selected && document.body) this.select(document.body)
+  }
+
   /** Folds the two capture buttons out from behind the camera, and back. */
   toggleShotTools(): void {
     store.set({ shotOpen: !store.get().shotOpen })

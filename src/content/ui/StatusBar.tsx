@@ -22,6 +22,7 @@ import {
 } from './icons'
 import { ExpandGroup } from './ExpandGroup'
 import { PanelGrip, usePanelDrag } from './PanelGrip'
+import { Switch } from './Switch'
 import { SHORTCUT_GROUPS } from './shortcuts'
 import { cx, zoomStable } from './util'
 
@@ -149,6 +150,17 @@ export function StatusBar({ snapshot }: { snapshot: EditorSnapshot }) {
           )}
         </Pill>
       )}
+
+      {/* The one setting in a bar of actions, so it is the one thing here that
+          is not a pill. See Switch.tsx. */}
+      <Switch
+        on={snapshot.layers}
+        label="Panels"
+        title="Panels — the layer tree on the left, this element's controls on the right"
+        onChange={() => controller.toggleLayers()}
+      />
+
+      <span className="dm-divider" />
 
       <ShotGroup snapshot={snapshot} />
 

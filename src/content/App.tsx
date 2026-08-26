@@ -12,6 +12,7 @@ import { GroupPrompt } from './ui/GroupPrompt'
 import { MeasureChrome } from './ui/MeasureChrome'
 import { HoverOutline } from './ui/HoverOutline'
 import { ElementBar } from './ui/ElementBar'
+import { LayerTree } from './ui/LayerTree'
 import { SelectionFrame } from './ui/SelectionFrame'
 import { ScreenshotOverlay } from './ui/ScreenshotOverlay'
 import { SelectionWash } from './ui/SelectionWash'
@@ -29,8 +30,20 @@ export function App() {
   const snapshot = useSyncExternalStore(store.subscribe, store.get)
   if (!snapshot.active) return null
 
-  const { hovered, selected, extras, editing, interaction, drop, shot, toast, preview, lens, flash } =
-    snapshot
+  const {
+    hovered,
+    selected,
+    extras,
+    editing,
+    interaction,
+    drop,
+    shot,
+    toast,
+    preview,
+    lens,
+    flash,
+    layers,
+  } = snapshot
 
   // Screenshot mode owns the screen: the editing chrome would only be
   // photographed or get in the way of the marquee.
@@ -53,7 +66,7 @@ export function App() {
   // back to the selection — hovering is the more common way to reach for an asset.
   const mediaNode =
     !editing && interaction === 'idle'
-      ? [hovered, selected].find((node) => node && isMedia(node.el)) ?? null
+      ? ([hovered, selected].find((node) => node && isMedia(node.el)) ?? null)
       : null
 
   return (
@@ -99,8 +112,21 @@ export function App() {
         </>
       )}
 
-      {/* Kept through a preview: it carries the picker being used. */}
-      {selected && !editing && !moving && !comparing && <ElementBar node={selected} />}
+      {/**
+       * Kept through a preview: it carries the picker being used.
+       *
+       * Docked, it is the same component in its column form and it stays put
+       * through a multi-selection too — a docked panel that vanished when you
+       * shift-clicked a second element would leave a hole in the layout, which
+       * a floating bar disappearing never does.
+       */}
+      {selected && !editing && !moving && (layers || !comparing) && (
+        <ElementBar node={selected} docked={layers} />
+      )}
+
+      {/* The page as layers, on the left. Independent of the selection: it is
+          how you *find* something to select. */}
+      {layers && <LayerTree snapshot={snapshot} />}
 
       {moving && drop && <DropOverlay drop={drop} />}
 

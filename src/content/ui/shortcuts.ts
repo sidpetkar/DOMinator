@@ -67,6 +67,8 @@ export const SHORTCUT_GROUPS: { title: string; items: [string, string][] }[] = [
   {
     title: 'Tools',
     items: [
+      ['Panels switch', 'Layer tree left, controls right'],
+      ['Drag a tree row', 'Move the element into another container'],
       ['S, S', 'Screenshot a region'],
       ['Camera', 'A region, or the whole page in one click'],
       ['Accessibility pill', 'Contrast and tab-order checks'],

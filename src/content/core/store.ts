@@ -75,6 +75,17 @@ export interface EditorSnapshot {
   /** Whether the full-page button is revealed beside the camera. */
   shotOpen: boolean
   /**
+   * The docked layout: a layer tree down the left, the element's controls down
+   * the right, the way a design tool arranges itself.
+   *
+   * It is one flag rather than two because the two halves are one idea. The
+   * floating bar exists to stay out of the way of a page you are reading; the
+   * docked panels exist for when you have stopped reading the page and started
+   * building it, and at that point you want the tree and the whole control panel at
+   * once, not a bar that hides half of itself.
+   */
+  layers: boolean
+  /**
    * Which element-bar groups are unfolded into their four parts.
    *
    * Kept here rather than in the bar's own state because it is a preference
@@ -132,6 +143,7 @@ const EMPTY: EditorSnapshot = {
   xray: false,
   adaOpen: false,
   shotOpen: false,
+  layers: false,
   expanded: {},
   lens: null,
   undoDepth: 0,

@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, useState, type ReactNode } from 'react'
+import { createContext, useContext, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import {
   DEFAULT_BORDER_COLOR,
   readBox,
@@ -29,6 +29,7 @@ import {
 import { COLORS } from '@/shared/constants'
 import { cssColor, hexToRgb, parseColor, rgbToHex } from '../core/color'
 import { controller } from '../core/controller'
+import { describe } from '../core/geometry'
 import { isGroup } from '../core/group'
 import * as history from '../core/history'
 import {
@@ -111,14 +112,69 @@ const V_EDGES: { edge: AlignEdge; pos: AlignPos; label: string }[] = [
 type OpenPicker = 'fill' | 'border' | null
 
 /**
+ * Whether the controls are laid out as a bar or as a docked column.
+ *
+ * A context rather than a prop threaded through every control: the sections are
+ * nested inside conditionals several levels deep, and passing a boolean down
+ * that whole tree to be read by one component at the bottom is the shape this
+ * exists to avoid.
+ */
+const Docked = createContext(false)
+
+/**
+ * One group of controls, and the only thing that differs between the two
+ * layouts.
+ *
+ * In the bar it is its contents followed by a hairline, exactly as before — the
+ * divider *is* the grouping, and a title would double the bar's width to say
+ * what the icons already say. Docked, the same group becomes a labelled row,
+ * because a column of unlabelled icon rows is a much harder thing to scan than
+ * a line of them: in a row your eye has the neighbours for context, in a column
+ * each row is alone with itself.
+ */
+function Section({
+  title,
+  last = false,
+  children,
+}: {
+  title: string
+  /** The final group: a hairline after it would be a rule against nothing. */
+  last?: boolean
+  children: ReactNode
+}) {
+  const docked = useContext(Docked)
+  if (!docked) {
+    return (
+      <>
+        {children}
+        {!last && <span className="dm-divider" />}
+      </>
+    )
+  }
+  return (
+    <div className="flex items-start gap-1.5 px-2.5 py-[5px]">
+      <span className="w-[44px] shrink-0 pt-[5px] text-[10px] leading-tight font-medium text-ink-soft">
+        {title}
+      </span>
+      <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1">{children}</div>
+    </div>
+  )
+}
+
+/**
  * The controls for the selected element: how it arranges its children, and what
  * its own box looks like.
  *
  * One bar rather than two floating panels — they would fight for the same space
  * above the selection. The layout half only appears when there are children to
  * arrange; the box half applies to anything with a box, which is everything.
+ *
+ * Docked, it is the same controls in the same order, stacked and labelled down
+ * the right-hand side. Nothing is added or taken away between the two: a control
+ * that only exists in one of them is a control someone will look for in the
+ * other and conclude is broken.
  */
-export function ElementBar({ node }: { node: Node }) {
+export function ElementBar({ node, docked = false }: { node: Node; docked?: boolean }) {
   const [picker, setPicker] = useState<OpenPicker>(null)
   const gesture = useRef(false)
   const info = readLayout(node.el)
@@ -217,6 +273,381 @@ export function ElementBar({ node }: { node: Node }) {
   const left = grip.pinned ? grip.pinned.left : anchoredLeft
   const dropUp = top > window.innerHeight - COLOR_PANEL_HEIGHT - shownHeight
 
+  /**
+   * Written once and rendered by both layouts. Keeping two copies in sync is not
+   * a thing anyone succeeds at for long, and the failure mode is the worst kind:
+   * a control that quietly exists in one layout and not the other.
+   */
+  const sections = (
+    <>
+      {/* A group has no purpose beyond holding its children, so the way back out
+          belongs next to the controls that are the reason it was made. */}
+      {grouped && (
+        <Section title="Group">
+          <Toggle
+            label="Ungroup — dissolve this container, leave its children in place (Ctrl/Cmd+Shift+G)"
+            onClick={() => controller.ungroupSelection()}
+          >
+            <UngroupIcon />
+          </Toggle>
+        </Section>
+      )}
+
+      {hasLayout && (
+        <>
+          <Section title="Stack">
+            <Toggle
+              label="Stack vertically"
+              active={info.axis === 'column'}
+              onClick={act(() => setAxis(node.el, 'column'))}
+            >
+              <StackIcon axis="column" />
+            </Toggle>
+            <Toggle
+              label="Stack horizontally"
+              active={info.axis === 'row'}
+              onClick={act(() => setAxis(node.el, 'row'))}
+            >
+              <StackIcon axis="row" />
+            </Toggle>
+            <Toggle
+              label="Wrap"
+              active={info.wrap}
+              onClick={act(() => setWrap(node.el, !info.wrap))}
+            >
+              <WrapIcon />
+            </Toggle>
+          </Section>
+
+          <Section title="Align">
+            {H_EDGES.map(({ edge, pos, label }) => (
+              <Toggle
+                key={edge}
+                label={label}
+                active={align.horizontal === pos}
+                onClick={act(() => alignChildren(node.el, edge))}
+              >
+                <AlignIcon axis="h" pos={pos} />
+              </Toggle>
+            ))}
+
+            <span className="dm-divider" />
+
+            {V_EDGES.map(({ edge, pos, label }) => (
+              <Toggle
+                key={edge}
+                label={label}
+                active={align.vertical === pos}
+                onClick={act(() => alignChildren(node.el, edge))}
+              >
+                <AlignIcon axis="v" pos={pos} />
+              </Toggle>
+            ))}
+          </Section>
+
+          <Section title="Space">
+            <Toggle
+              label="Space between"
+              active={align.distribution === 'between'}
+              onClick={act(() => distribute(node.el, 'between'))}
+            >
+              <DistributeIcon axis={info.axis} mode="between" />
+            </Toggle>
+            <Toggle
+              label="Space evenly"
+              active={align.distribution === 'evenly'}
+              onClick={act(() => distribute(node.el, 'evenly'))}
+            >
+              <DistributeIcon axis={info.axis} mode="evenly" />
+            </Toggle>
+
+            <span className="dm-divider" />
+
+            <NumberField
+              label="gap"
+              value={info.gap}
+              title="CSS gap — the space the pink bands edit"
+              onChange={(next) => act(() => setGap(node.el, next))()}
+            />
+          </Section>
+        </>
+      )}
+
+      {/* — the element's own box — */}
+
+      {/**
+       * Exact size, for when the handles can't give it: matching a spec, making
+       * two cards agree to the pixel, or sizing something whose handles are off
+       * screen. The values are what the frame's readout shows — the rendered
+       * box — so typing back the number already displayed changes nothing, which
+       * is the only behaviour that makes the pair trustworthy.
+       *
+       * Each axis is written on its own, so setting a width leaves the height to
+       * the content rather than quietly freezing both.
+       */}
+      <Section title="Size">
+        <NumberField
+          label="W"
+          value={Math.round(rect.width)}
+          step={1}
+          min={0}
+          title="Width in px — the box as drawn, border included"
+          onChange={(next) => act(() => setSize(node.el, 'width', next))()}
+        />
+        <NumberField
+          label="H"
+          value={Math.round(rect.height)}
+          step={1}
+          min={0}
+          title="Height in px — the box as drawn, border included"
+          onChange={(next) => act(() => setSize(node.el, 'height', next))()}
+        />
+      </Section>
+
+      <Section title="Fill">
+        <div className="relative">
+          <Toggle
+            label="Fill colour"
+            onClick={() => setPicker(picker === 'fill' ? null : 'fill')}
+            active={picker === 'fill'}
+            wide
+          >
+            <ColorGlyph tint={box.background}>
+              <BucketIcon />
+            </ColorGlyph>
+          </Toggle>
+          {picker === 'fill' && (
+            <ColorPicker
+              value={box.background ?? '#ffffff'}
+              showContrast={false}
+              dropUp={dropUp}
+              onClose={() => setPicker(null)}
+              onGesture={onGesture}
+              onChange={(hex) => live(() => setBackground(node.el, hex))}
+              onReset={act(() => clearStyle(node.el, 'background-color'))}
+            />
+          )}
+        </div>
+
+        {/* Next to the fill, because both answer "what is inside this box" — one
+          with a colour, one with a picture. */}
+        <Toggle
+          label="Put an image in this box — or paste one straight in with Ctrl/Cmd+V"
+          onClick={() => controller.pickImage()}
+        >
+          <ImageIcon />
+        </Toggle>
+
+        <Toggle
+          label={box.hasBorder ? 'Hide border' : 'Add border'}
+          active={box.hasBorder}
+          onClick={act(() => setBorder(node.el, !box.hasBorder, box))}
+        >
+          {box.hasBorder ? <BorderIcon /> : <NoBorderIcon />}
+        </Toggle>
+
+        {box.hasBorder && (
+          <>
+            <div className="relative">
+              <Toggle
+                label="Border colour"
+                onClick={() => setPicker(picker === 'border' ? null : 'border')}
+                active={picker === 'border'}
+                wide
+              >
+                <ColorGlyph tint={box.borderColor}>
+                  <BorderPaintIcon />
+                </ColorGlyph>
+              </Toggle>
+              {picker === 'border' && (
+                <ColorPicker
+                  value={box.borderColor || DEFAULT_BORDER_COLOR}
+                  showContrast={false}
+                  dropUp={dropUp}
+                  onClose={() => setPicker(null)}
+                  onGesture={onGesture}
+                  onChange={(hex) => live(() => setBorderColor(node.el, hex))}
+                  onReset={act(() => clearStyle(node.el, 'border-color'))}
+                />
+              )}
+            </div>
+            <NumberField
+              label="w"
+              value={box.borderWidth}
+              step={1}
+              min={0}
+              title="Border width"
+              onChange={(next) => act(() => setBorderWidth(node.el, next))()}
+            />
+          </>
+        )}
+      </Section>
+
+      <Section title="Padding">
+        <SpacingGroup
+          kind="padding"
+          info={pad}
+          open={Boolean(expanded.padding)}
+          el={node.el}
+          onUnfold={() => unfold('padding')}
+          live={live}
+          settle={settle}
+        />
+      </Section>
+
+      <Section title="Margin">
+        <SpacingGroup
+          kind="margin"
+          info={mar}
+          open={Boolean(expanded.margin)}
+          el={node.el}
+          onUnfold={() => unfold('margin')}
+          live={live}
+          settle={settle}
+        />
+      </Section>
+
+      <Section title="Radius">
+        {/* — corners — */}
+        <Toggle
+          label={
+            expanded.radius ? 'Fold the corners back into one radius' : 'Set each corner on its own'
+          }
+          active={Boolean(expanded.radius)}
+          onClick={() => unfold('radius')}
+        >
+          <CornersIcon />
+        </Toggle>
+        {!expanded.radius && (
+          <NumberField
+            compact
+            label="corner radius"
+            title="Corner radius — drag to scrub, double-click to type"
+            icon={<CornerIcon corner="tl" />}
+            value={radius.value}
+            mixed={!radius.uniform}
+            step={2}
+            min={0}
+            onGesture={settle}
+            onChange={(next) => live(() => setRadius(node.el, next))}
+          />
+        )}
+        <ExpandGroup open={Boolean(expanded.radius)}>
+          {CORNERS.map(({ corner, label }) => (
+            <NumberField
+              key={corner}
+              compact
+              label={`${label} radius`}
+              title={`${label} corner radius`}
+              icon={<CornerIcon corner={corner} />}
+              value={radius.corners[corner]}
+              step={2}
+              min={0}
+              onGesture={settle}
+              onChange={(next) => live(() => setCorner(node.el, corner, next))}
+            />
+          ))}
+        </ExpandGroup>
+      </Section>
+
+      <Section title="Shadow">
+        {/* — shadow — */}
+        <Toggle
+          label={shadow.on ? 'Shadow — click to open its settings' : 'Add a drop shadow'}
+          active={Boolean(expanded.shadow)}
+          onClick={() => {
+            // The first click on a box with no shadow gives it one, because an
+            // unfolded row of zeroes that paints nothing looks broken. After that
+            // the button is only the door to the settings.
+            if (!shadow.on) act(() => setShadow(node.el, DEFAULT_SHADOW))()
+            unfold('shadow')
+          }}
+        >
+          <ShadowIcon />
+        </Toggle>
+        <ExpandGroup open={Boolean(expanded.shadow)}>
+          <ShadowFields
+            shadow={shadow}
+            el={node.el}
+            live={live}
+            settle={settle}
+            act={act}
+            dropUp={dropUp}
+            onGesture={onGesture}
+          />
+        </ExpandGroup>
+      </Section>
+
+      {/* — position: no folded state, because there is nothing to summarise.
+          Four unrelated verbs, not four parts of one number. */}
+      <Section title="Position" last>
+        <NumberField
+          compact
+          label="rotation"
+          title="Rotation — drag to scrub, double-click to type"
+          icon={<RotationIcon />}
+          value={position.rotation}
+          step={15}
+          min={-Infinity}
+          suffix="°"
+          onGesture={settle}
+          onChange={(next) => live(() => setRotation(node.el, next))}
+        />
+        <Toggle
+          label="Turn a quarter clockwise"
+          onClick={act(() => setRotation(node.el, position.rotation + 90))}
+        >
+          <RotateStepIcon />
+        </Toggle>
+        <Toggle
+          label="Flip horizontally"
+          active={position.flipX}
+          onClick={act(() => setFlip(node.el, 'x', !position.flipX))}
+        >
+          <FlipIcon axis="row" />
+        </Toggle>
+        <Toggle
+          label="Flip vertically"
+          active={position.flipY}
+          onClick={act(() => setFlip(node.el, 'y', !position.flipY))}
+        >
+          <FlipIcon axis="column" />
+        </Toggle>
+      </Section>
+    </>
+  )
+
+  if (docked) {
+    return (
+      <Docked.Provider value={true}>
+        <div
+          className="dm-panel dm-interactive flex flex-col overflow-hidden"
+          style={{
+            position: 'fixed',
+            right: 12,
+            top: 12,
+            bottom: 62,
+            width: 264,
+            borderRadius: 14,
+          }}
+        >
+          <div className="flex items-center gap-1.5 border-b border-line px-2.5 py-2">
+            <span
+              className="min-w-0 flex-1 truncate text-[11px] font-medium text-ink"
+              style={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}
+              title={describe(node.el)}
+            >
+              {describe(node.el)}
+            </span>
+          </div>
+          <div className="min-h-0 flex-1 divide-y divide-line overflow-x-hidden overflow-y-auto">
+            {sections}
+          </div>
+        </div>
+      </Docked.Provider>
+    )
+  }
+
   return (
     <div
       ref={barRef}
@@ -234,336 +665,7 @@ export function ElementBar({ node }: { node: Node }) {
       }}
     >
       <PanelGrip onGrab={grip.onGrab} reset={grip.reset} />
-
-      {/* A group has no purpose beyond holding its children, so the way back out
-          belongs next to the controls that are the reason it was made. */}
-      {grouped && (
-        <>
-          <Toggle
-            label="Ungroup — dissolve this container, leave its children in place (Ctrl/Cmd+Shift+G)"
-            onClick={() => controller.ungroupSelection()}
-          >
-            <UngroupIcon />
-          </Toggle>
-          <span className="dm-divider" />
-        </>
-      )}
-
-      {hasLayout && (
-        <>
-          <Toggle
-            label="Stack vertically"
-            active={info.axis === 'column'}
-            onClick={act(() => setAxis(node.el, 'column'))}
-          >
-            <StackIcon axis="column" />
-          </Toggle>
-          <Toggle
-            label="Stack horizontally"
-            active={info.axis === 'row'}
-            onClick={act(() => setAxis(node.el, 'row'))}
-          >
-            <StackIcon axis="row" />
-          </Toggle>
-          <Toggle label="Wrap" active={info.wrap} onClick={act(() => setWrap(node.el, !info.wrap))}>
-            <WrapIcon />
-          </Toggle>
-
-          <span className="dm-divider" />
-
-          {H_EDGES.map(({ edge, pos, label }) => (
-            <Toggle
-              key={edge}
-              label={label}
-              active={align.horizontal === pos}
-              onClick={act(() => alignChildren(node.el, edge))}
-            >
-              <AlignIcon axis="h" pos={pos} />
-            </Toggle>
-          ))}
-
-          <span className="dm-divider" />
-
-          {V_EDGES.map(({ edge, pos, label }) => (
-            <Toggle
-              key={edge}
-              label={label}
-              active={align.vertical === pos}
-              onClick={act(() => alignChildren(node.el, edge))}
-            >
-              <AlignIcon axis="v" pos={pos} />
-            </Toggle>
-          ))}
-
-          <span className="dm-divider" />
-
-          <Toggle
-            label="Space between"
-            active={align.distribution === 'between'}
-            onClick={act(() => distribute(node.el, 'between'))}
-          >
-            <DistributeIcon axis={info.axis} mode="between" />
-          </Toggle>
-          <Toggle
-            label="Space evenly"
-            active={align.distribution === 'evenly'}
-            onClick={act(() => distribute(node.el, 'evenly'))}
-          >
-            <DistributeIcon axis={info.axis} mode="evenly" />
-          </Toggle>
-
-          <span className="dm-divider" />
-
-          <NumberField
-            label="gap"
-            value={info.gap}
-            title="CSS gap — the space the pink bands edit"
-            onChange={(next) => act(() => setGap(node.el, next))()}
-          />
-
-          <span className="dm-divider" />
-        </>
-      )}
-
-      {/* — the element's own box — */}
-
-      {/**
-       * Exact size, for when the handles can't give it: matching a spec, making
-       * two cards agree to the pixel, or sizing something whose handles are off
-       * screen. The values are what the frame's readout shows — the rendered
-       * box — so typing back the number already displayed changes nothing, which
-       * is the only behaviour that makes the pair trustworthy.
-       *
-       * Each axis is written on its own, so setting a width leaves the height to
-       * the content rather than quietly freezing both.
-       */}
-      <NumberField
-        label="W"
-        value={Math.round(rect.width)}
-        step={1}
-        min={0}
-        title="Width in px — the box as drawn, border included"
-        onChange={(next) => act(() => setSize(node.el, 'width', next))()}
-      />
-      <NumberField
-        label="H"
-        value={Math.round(rect.height)}
-        step={1}
-        min={0}
-        title="Height in px — the box as drawn, border included"
-        onChange={(next) => act(() => setSize(node.el, 'height', next))()}
-      />
-
-      <span className="dm-divider" />
-
-      <div className="relative">
-        <Toggle
-          label="Fill colour"
-          onClick={() => setPicker(picker === 'fill' ? null : 'fill')}
-          active={picker === 'fill'}
-          wide
-        >
-          <ColorGlyph tint={box.background}>
-            <BucketIcon />
-          </ColorGlyph>
-        </Toggle>
-        {picker === 'fill' && (
-          <ColorPicker
-            value={box.background ?? '#ffffff'}
-            showContrast={false}
-            dropUp={dropUp}
-            onClose={() => setPicker(null)}
-            onGesture={onGesture}
-            onChange={(hex) => live(() => setBackground(node.el, hex))}
-            onReset={act(() => clearStyle(node.el, 'background-color'))}
-          />
-        )}
-      </div>
-
-      {/* Next to the fill, because both answer "what is inside this box" — one
-          with a colour, one with a picture. */}
-      <Toggle
-        label="Put an image in this box — or paste one straight in with Ctrl/Cmd+V"
-        onClick={() => controller.pickImage()}
-      >
-        <ImageIcon />
-      </Toggle>
-
-      <Toggle
-        label={box.hasBorder ? 'Hide border' : 'Add border'}
-        active={box.hasBorder}
-        onClick={act(() => setBorder(node.el, !box.hasBorder, box))}
-      >
-        {box.hasBorder ? <BorderIcon /> : <NoBorderIcon />}
-      </Toggle>
-
-      {box.hasBorder && (
-        <>
-          <div className="relative">
-            <Toggle
-              label="Border colour"
-              onClick={() => setPicker(picker === 'border' ? null : 'border')}
-              active={picker === 'border'}
-              wide
-            >
-              <ColorGlyph tint={box.borderColor}>
-                <BorderPaintIcon />
-              </ColorGlyph>
-            </Toggle>
-            {picker === 'border' && (
-              <ColorPicker
-                value={box.borderColor || DEFAULT_BORDER_COLOR}
-                showContrast={false}
-                dropUp={dropUp}
-                onClose={() => setPicker(null)}
-                onGesture={onGesture}
-                onChange={(hex) => live(() => setBorderColor(node.el, hex))}
-                onReset={act(() => clearStyle(node.el, 'border-color'))}
-              />
-            )}
-          </div>
-          <NumberField
-            label="w"
-            value={box.borderWidth}
-            step={1}
-            min={0}
-            title="Border width"
-            onChange={(next) => act(() => setBorderWidth(node.el, next))()}
-          />
-        </>
-      )}
-
-      <span className="dm-divider" />
-
-      <SpacingGroup
-        kind="padding"
-        info={pad}
-        open={Boolean(expanded.padding)}
-        el={node.el}
-        onUnfold={() => unfold('padding')}
-        live={live}
-        settle={settle}
-      />
-
-      <span className="dm-divider" />
-
-      <SpacingGroup
-        kind="margin"
-        info={mar}
-        open={Boolean(expanded.margin)}
-        el={node.el}
-        onUnfold={() => unfold('margin')}
-        live={live}
-        settle={settle}
-      />
-
-      <span className="dm-divider" />
-
-      {/* — corners — */}
-      <Toggle
-        label={
-          expanded.radius ? 'Fold the corners back into one radius' : 'Set each corner on its own'
-        }
-        active={Boolean(expanded.radius)}
-        onClick={() => unfold('radius')}
-      >
-        <CornersIcon />
-      </Toggle>
-      {!expanded.radius && (
-        <NumberField
-          compact
-          label="corner radius"
-          title="Corner radius — drag to scrub, double-click to type"
-          icon={<CornerIcon corner="tl" />}
-          value={radius.value}
-          mixed={!radius.uniform}
-          step={2}
-          min={0}
-          onGesture={settle}
-          onChange={(next) => live(() => setRadius(node.el, next))}
-        />
-      )}
-      <ExpandGroup open={Boolean(expanded.radius)}>
-        {CORNERS.map(({ corner, label }) => (
-          <NumberField
-            key={corner}
-            compact
-            label={`${label} radius`}
-            title={`${label} corner radius`}
-            icon={<CornerIcon corner={corner} />}
-            value={radius.corners[corner]}
-            step={2}
-            min={0}
-            onGesture={settle}
-            onChange={(next) => live(() => setCorner(node.el, corner, next))}
-          />
-        ))}
-      </ExpandGroup>
-
-      <span className="dm-divider" />
-
-      {/* — shadow — */}
-      <Toggle
-        label={shadow.on ? 'Shadow — click to open its settings' : 'Add a drop shadow'}
-        active={Boolean(expanded.shadow)}
-        onClick={() => {
-          // The first click on a box with no shadow gives it one, because an
-          // unfolded row of zeroes that paints nothing looks broken. After that
-          // the button is only the door to the settings.
-          if (!shadow.on) act(() => setShadow(node.el, DEFAULT_SHADOW))()
-          unfold('shadow')
-        }}
-      >
-        <ShadowIcon />
-      </Toggle>
-      <ExpandGroup open={Boolean(expanded.shadow)}>
-        <ShadowFields
-          shadow={shadow}
-          el={node.el}
-          live={live}
-          settle={settle}
-          act={act}
-          dropUp={dropUp}
-          onGesture={onGesture}
-        />
-      </ExpandGroup>
-
-      <span className="dm-divider" />
-
-      {/* — position: no folded state, because there is nothing to summarise.
-          Four unrelated verbs, not four parts of one number. */}
-      <NumberField
-        compact
-        label="rotation"
-        title="Rotation — drag to scrub, double-click to type"
-        icon={<RotationIcon />}
-        value={position.rotation}
-        step={15}
-        min={-Infinity}
-        suffix="°"
-        onGesture={settle}
-        onChange={(next) => live(() => setRotation(node.el, next))}
-      />
-      <Toggle
-        label="Turn a quarter clockwise"
-        onClick={act(() => setRotation(node.el, position.rotation + 90))}
-      >
-        <RotateStepIcon />
-      </Toggle>
-      <Toggle
-        label="Flip horizontally"
-        active={position.flipX}
-        onClick={act(() => setFlip(node.el, 'x', !position.flipX))}
-      >
-        <FlipIcon axis="row" />
-      </Toggle>
-      <Toggle
-        label="Flip vertically"
-        active={position.flipY}
-        onClick={act(() => setFlip(node.el, 'y', !position.flipY))}
-      >
-        <FlipIcon axis="column" />
-      </Toggle>
+      {sections}
     </div>
   )
 }
