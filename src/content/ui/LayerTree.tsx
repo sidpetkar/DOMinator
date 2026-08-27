@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointer
 import { OWN_NODE_ATTR } from '@/shared/constants'
 import { LOGO_DATA_URL } from '@/shared/logo'
 import { controller } from '../core/controller'
+import { frameOf, isFrame } from '../core/frames'
 import { startDrag } from '../core/drag'
 import { nodeOf, store, type EditorSnapshot } from '../core/store'
 import { zoom } from '../core/zoom'
@@ -61,6 +62,10 @@ export function LayerTree({ snapshot }: { snapshot: EditorSnapshot }) {
     setOpen((current) => {
       const next = new Set(current)
       for (const parent of ancestry(selected.el)) next.add(parent)
+      // A variation is also the tree's root while it is selected, and a root
+      // that opens collapsed shows one row and none of the structure that is
+      // the reason you selected it.
+      if (isFrame(selected.el)) next.add(selected.el)
       return next
     })
   }, [selected])
@@ -180,7 +185,17 @@ export function LayerTree({ snapshot }: { snapshot: EditorSnapshot }) {
     if (!expanded) return
     for (const child of childrenOf(el)) walk(child, depth + 1)
   }
-  if (document.body) walk(document.body, 0)
+  /**
+   * Rooted at the selected variation when there is one, and at the page
+   * otherwise.
+   *
+   * A variation is a thing you are working on rather than a thing in the page,
+   * and while you are inside one the forty rows of document around it are
+   * nothing but distance between you and the four you care about. Deselect, or
+   * pick something in the page, and the whole tree comes back.
+   */
+  const root = (selected && frameOf(selected.el)) ?? document.body
+  if (root) walk(root, 0)
 
   return (
     <div

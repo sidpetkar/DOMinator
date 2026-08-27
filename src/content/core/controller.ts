@@ -7,6 +7,7 @@ import * as history from './history'
 import { commitShift, findShift } from './reorder'
 import { setBackground } from './box'
 import * as canvas from './canvas'
+import * as frames from './frames'
 import { clearStyle, editedCount, revertAll, setStyle } from './styles'
 import { setXray } from './xray'
 import { watchZoom } from './zoom'
@@ -161,6 +162,7 @@ class Controller {
     setXray(false)
     this.stopLensWatch()
     canvas.exit()
+    frames.clear()
     this.spaceHeld = false
     history.clear()
     store.reset()
@@ -299,6 +301,25 @@ class Controller {
     }
     if (interaction !== 'idle' || event.button !== 0) return
 
+    /**
+     * Alt+drag lifts a copy of whatever is under the cursor onto the canvas and
+     * carries on dragging it, so pulling a section out and putting it somewhere
+     * is one gesture rather than three.
+     *
+     * Ahead of the modifier guard below, which returns on any held key: Alt is
+     * the one modifier that now means something on press as well as on click.
+     * A threshold inside the drag keeps the two apart — travel lifts, and a bare
+     * Alt+*click* still falls through to the handler that steps out to the
+     * parent, because it never travelled.
+     */
+    if (canvas.active() && event.altKey) {
+      const source = deepestAt(event.clientX, event.clientY)
+      if (source) {
+        this.liftAndDrag(source, event)
+        return
+      }
+    }
+
     // Dragging anywhere inside the current selection moves it (PRD §3.4) —
     // including over its own text, which is where a designer naturally grabs a
     // card. The 4px threshold inside beginMove keeps click-to-select and
@@ -306,8 +327,16 @@ class Controller {
     // left alone because those mean "re-target the selection", not "move it".
     if (!selected || event.ctrlKey || event.metaKey || event.altKey) return
     const under = deepestAt(event.clientX, event.clientY)
-    if (under && (under === selected.el || selected.el.contains(under))) {
-      beginMove(selected.el, event)
+    if (!under) return
+
+    if (under === selected.el || selected.el.contains(under)) {
+      /**
+       * A variation is not in the page's flow, so dragging it cannot mean
+       * "re-home it among these siblings" the way dragging page content does.
+       * It means move it on the surface, which is what a thing on a canvas does.
+       */
+      if (frames.isFrame(selected.el)) this.beginFrameDrag(selected.el, event)
+      else beginMove(selected.el, event)
     }
   }
 
@@ -372,7 +401,18 @@ class Controller {
    * failure to load rather than as "pick something", and the body is the one
    * element that is always there and always a legitimate thing to be looking at.
    */
+  /**
+   * Variations are parked when the canvas folds away and put back when it
+   * returns. Registered here rather than inside canvas.ts so that module goes
+   * on owning a transform and nothing else.
+   */
+  private surfaceBound = false
+
   toggleLayers(): void {
+    if (!this.surfaceBound) {
+      canvas.onSurface(frames.restore, frames.park)
+      this.surfaceBound = true
+    }
     const next = !store.get().layers
     if (next) canvas.enter()
     else canvas.exit()
@@ -833,7 +873,17 @@ class Controller {
    */
   pasteIntoSelected(): void {
     const { selected } = store.get()
-    if (!selected || !clipboard.has()) return
+    if (!clipboard.has()) return
+    /**
+     * Pasting with nothing selected used to do nothing, because there was
+     * nowhere for it to go. On the canvas there is: copy a section, click the
+     * empty surface, paste, and it lands as a variation.
+     */
+    if (!selected) {
+      if (!canvas.active()) return
+      this.pasteAsFrame()
+      return
+    }
     const result = clipboard.paste(selected.el)
     if (!result) return
     store.set(history.depths())
@@ -908,9 +958,30 @@ class Controller {
     }
   }
 
+  /** Whatever is on the clipboard, as a new variation on the surface. */
+  private pasteAsFrame(): void {
+    const holder = document.createElement('div')
+    const landed = clipboard.paste(holder)
+    if (!landed) return
+    const lifted = frames.lift(
+      [...holder.children].filter((node): node is HTMLElement => node instanceof HTMLElement),
+    )
+    if (!lifted) return
+    this.select(lifted)
+    canvas.reveal(lifted)
+    this.toast('Pasted onto the canvas')
+  }
+
   duplicateSelected(): void {
     const { selected } = store.get()
     if (!selected) return
+    // A variation duplicates beside itself on the surface; page content
+    // duplicates in place next to its original.
+    if (frames.isFrame(selected.el)) {
+      const copy = frames.duplicate(selected.el)
+      if (copy) this.select(copy)
+      return
+    }
     const copy = clipboard.duplicate(selected.el)
     store.set(history.depths())
     this.select(copy)
@@ -1163,6 +1234,75 @@ class Controller {
         canvas.panBy(from.x + drag.dx - now.x, from.y + drag.dy - now.y)
       },
     })
+  }
+
+  /**
+   * Moving a variation. Deltas are screen pixels and `left`/`top` are canvas
+   * pixels, so the drag is divided by the zoom — the same conversion every other
+   * drag on the canvas makes.
+   */
+  private beginFrameDrag(frame: HTMLElement, event: PointerEvent): void {
+    const from = frames.positionOf(frame)
+    startDrag(event, {
+      cursor: 'grabbing',
+      threshold: 3,
+      onStart: () => history.begin('move variation', frame),
+      onMove: (drag) => {
+        const z = canvas.scale()
+        frames.place(frame, from.x + drag.dx / z, from.y + drag.dy / z)
+        store.remeasure()
+      },
+      onEnd: () => {
+        history.commit()
+        store.set(history.depths())
+      },
+    })
+  }
+
+  /**
+   * Alt+drag: lift a copy, then carry it.
+   *
+   * The copy is made on the first movement rather than on the press, so an
+   * Alt+click that never travels leaves nothing behind — it is still the
+   * gesture that steps out to the parent, and a stray variation appearing every
+   * time someone used it would be a tax on an unrelated shortcut.
+   */
+  private liftAndDrag(source: HTMLElement, event: PointerEvent): void {
+    let frame: HTMLElement | null = null
+    let from = { x: 0, y: 0 }
+    startDrag(event, {
+      cursor: 'grabbing',
+      threshold: 4,
+      onStart: () => {
+        frame = frames.lift([source])
+        if (!frame) return
+        from = frames.positionOf(frame)
+        this.select(frame)
+      },
+      onMove: (drag) => {
+        if (!frame) return
+        const z = canvas.scale()
+        frames.place(frame, from.x + drag.dx / z, from.y + drag.dy / z)
+        store.remeasure()
+      },
+      onEnd: () => {
+        if (frame) store.set(history.depths())
+      },
+    })
+  }
+
+  /**
+   * Lifts the selection onto the canvas as a variation — the button's route to
+   * what Alt+drag does by hand.
+   */
+  liftSelection(): void {
+    const elements = this.selectionElements()
+    if (!elements.length || !canvas.active()) return
+    const frame = frames.lift(elements)
+    if (!frame) return
+    this.select(frame)
+    canvas.reveal(frame)
+    this.toast(`Lifted ${describe(elements[0]!)} onto the canvas`)
   }
 
   private swallow = (event: Event): void => {

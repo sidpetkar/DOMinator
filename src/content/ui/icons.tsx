@@ -484,3 +484,24 @@ export const FlipIcon = ({ axis }: { axis: Axis }) => (
     </g>
   </Mark>
 )
+
+/**
+ * Lift: a copy coming up off the page. Two of the same rectangle, the upper one
+ * shifted and solid — the mark has to read at 13px as "there are now two of
+ * these and one of them is out", which an arrow could not say as quickly.
+ */
+export const LiftIcon = () => (
+  <Mark>
+    <rect
+      x="3.2"
+      y="6.6"
+      width="6.2"
+      height="6.2"
+      rx="1.4"
+      stroke="currentColor"
+      strokeWidth="1.3"
+      strokeOpacity="0.45"
+    />
+    <rect x="6.6" y="3.2" width="6.2" height="6.2" rx="1.4" fill="currentColor" />
+  </Mark>
+)

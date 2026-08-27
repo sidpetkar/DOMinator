@@ -27,6 +27,7 @@ import {
   type ShadowInfo,
 } from '../core/effects'
 import { COLORS } from '@/shared/constants'
+import { isFrame } from '../core/frames'
 import { scale as canvasScale } from '../core/canvas'
 import { cssColor, hexToRgb, parseColor, rgbToHex } from '../core/color'
 import { controller } from '../core/controller'
@@ -62,6 +63,7 @@ import {
   CornersIcon,
   DistributeIcon,
   EdgeIcon,
+  LiftIcon,
   FlipIcon,
   ImageIcon,
   NoBorderIcon,
@@ -651,6 +653,16 @@ export function ElementBar({ node, docked = false }: { node: Node; docked?: bool
             >
               {describe(node.el)}
             </span>
+            {/* Only on the canvas, and only for something that is not already a
+                variation: lifting a variation would copy a copy. */}
+            {store.get().layers && !isFrame(node.el) && (
+              <Toggle
+                label="Lift a copy onto the canvas to try a variation (Alt+drag does the same)"
+                onClick={() => controller.liftSelection()}
+              >
+                <LiftIcon />
+              </Toggle>
+            )}
             <PanelCollapse
               collapsed={shut}
               label="the controls"

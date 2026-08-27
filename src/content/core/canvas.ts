@@ -48,6 +48,19 @@ let view: View = { x: 0, y: 0, scale: 1 }
  */
 let restore: { html: string | null; body: string | null; scrollY: number } | null = null
 
+/**
+ * Hooks for whatever else belongs on the surface — today the variations in
+ * frames.ts. Registered rather than imported so the canvas keeps knowing
+ * nothing about them: it owns a transform, not a scene graph.
+ */
+let onEnter: (() => void) | null = null
+let onExit: (() => void) | null = null
+
+export function onSurface(enter: () => void, leave: () => void): void {
+  onEnter = enter
+  onExit = leave
+}
+
 export const active = (): boolean => on
 
 /** The canvas zoom, or 1 when there is no canvas. */
@@ -126,6 +139,7 @@ export function enter(): void {
   // than the page jumping to its top the instant the canvas appears.
   view = { x: 0, y: -restore.scrollY, scale: 1 }
   paint()
+  onEnter?.()
 }
 
 /**
@@ -144,6 +158,7 @@ function readBackground(body: HTMLElement, html: HTMLElement): string {
 
 export function exit(): void {
   if (!on || !restore) return
+  onExit?.()
   const html = document.documentElement
   const body = document.body
   const put = (el: HTMLElement, value: string | null) => {
