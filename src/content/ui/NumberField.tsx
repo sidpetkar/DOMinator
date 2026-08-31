@@ -6,7 +6,7 @@ import {
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
 } from 'react'
-import { startDrag } from '../core/drag'
+import { consumedByDrag, startDrag } from '../core/drag'
 import { cx } from './util'
 
 /**
@@ -21,6 +21,24 @@ import { cx } from './util'
  * tracks the number as it is typed. Escape puts back the value the field was
  * opened with, since a live-applied edit has no other way back.
  */
+/**
+ * The field the cursor is over, if any.
+ *
+ * Arrow keys on a number box only worked while that box had the keyboard focus,
+ * which is almost never: you point at a padding chip, press Shift+Up, and
+ * nothing happens — the keystroke goes to the editor at large and nudges the
+ * *element* instead. Every design tool answers this the same way, by letting the
+ * control under the pointer take the keys, and this is the register that makes
+ * that possible: one entry, set on enter and cleared on leave.
+ *
+ * Read by the controller rather than by a listener of our own, because the
+ * controller already owns the window's keydown in the capture phase and would
+ * otherwise swallow the arrows before any field could see them.
+ */
+export const hoveredField: { current: ((event: KeyboardEvent) => boolean) | null } = {
+  current: null,
+}
+
 export function NumberField({
   label,
   value,
@@ -35,6 +53,9 @@ export function NumberField({
   icon,
   suffix,
   compact = false,
+  fill = false,
+  readout,
+  trailing,
 }: {
   label: string
   value: number
@@ -73,6 +94,28 @@ export function NumberField({
    * a stepper and the gesture anyone arriving from a design tool tries first.
    */
   compact?: boolean
+  /**
+   * Stretch to the room going rather than hug the number.
+   *
+   * The docked panel lays its chips out in two columns, and columns only read as
+   * columns if the things in them are the same width — four chips each sized to
+   * their own digits give a ragged grid where the eye has to find each field
+   * instead of landing on it. In the bar the opposite is true, so this is off by
+   * default: a chip there takes exactly the room its value needs.
+   */
+  fill?: boolean
+  /**
+   * A word in place of the number, for a quantity that is currently not one.
+   *
+   * "Hug" and "Fill" are sizes the same way 240 is a size, and they belong in
+   * the same box — a separate control for them would mean reading two places to
+   * learn one thing. The field goes quiet while a word is showing: there is no
+   * number to scrub or type, and offering the gesture anyway would be a
+   * hair-trigger route back to Fixed.
+   */
+  readout?: string
+  /** Sits at the end of the chip — the size field's mode caret. */
+  trailing?: ReactNode
 }) {
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState('')
@@ -96,22 +139,54 @@ export function NumberField({
     setEditing(true)
   }
 
+  /**
+   * The keys a number box answers, in both its states.
+   *
+   * One by one with the arrows, two by two with Shift — so a value can be walked
+   * onto an even number without arithmetic, which is most of what these fields
+   * are nudged towards. `+` and `-` do the same thing from the keyboard's other
+   * side; they are what anyone reaches for when the field is a chip rather than
+   * a spinner, and there is nothing else a plus sign could mean in a box that
+   * only holds numbers.
+   *
+   * Returns whether it took the key, so the caller can decide what else to do
+   * with the ones it did not.
+   */
+  const onArrowKey = (event: ReactKeyboardEvent): boolean => {
+    const nudge = event.shiftKey ? 2 : 1
+    if (event.key === 'ArrowUp') return bump(nudge)
+    if (event.key === 'ArrowDown') return bump(-nudge)
+    if (event.key === '+' || event.key === '=') return bump(nudge)
+    /**
+     * Only on the closed chip. In an open field a minus is the start of a
+     * negative number — margins and shadow offsets are routinely negative — and
+     * swallowing it would make those impossible to type.
+     */
+    if (event.key === '-' && !editing) return bump(-nudge)
+    return false
+  }
+
   const onFieldKey = (event: ReactKeyboardEvent) => {
     // The controller listens for Enter, arrows and Delete on the window;
     // inside this box they belong to the box.
     event.stopPropagation()
-    if (event.key === 'Enter') setEditing(false)
+    if (event.key === 'Enter') {
+      setEditing(false)
+      return
+    }
     if (event.key === 'Escape') {
       onChange(opened.current)
       setEditing(false)
+      return
     }
-    if (event.key === 'ArrowUp') bump(step)
-    if (event.key === 'ArrowDown') bump(-step)
+    if (onArrowKey(event)) event.preventDefault()
   }
 
-  const bump = (delta: number) => {
+  const bump = (delta: number): boolean => {
+    if (readout) return false
     if (onNudge) onNudge(delta)
     else onChange(clamp(value + delta))
+    return true
   }
 
   /**
@@ -120,7 +195,54 @@ export function NumberField({
    * somewhere in the middle of that. Shift multiplies by ten for the times you
    * do mean to travel.
    */
+  /**
+   * The same keys the field answers when focused, answered from a hover.
+   * Returns whether it took the key, so the caller can fall through.
+   */
+  const handleHoverKey = (event: KeyboardEvent): boolean => {
+    if (readout) return false
+    const nudge = event.shiftKey ? 2 : 1
+    if (event.key === 'ArrowUp') return bump(nudge)
+    if (event.key === 'ArrowDown') return bump(-nudge)
+    if (event.key === '+' || event.key === '=') return bump(nudge)
+    if (event.key === '-') return bump(-nudge)
+    return false
+  }
+
+  /**
+   * A stable identity around a body that is replaced every render.
+   *
+   * The register is written on pointer *enter* and read on every keystroke after
+   * that, so handing it the render's own closure meant it went stale the instant
+   * the first nudge landed: every later key was computed from the value the
+   * field had when the cursor arrived, and holding Up walked 12 → 13 → 13 → 13.
+   * The ref is refreshed each render; the function put in the register never
+   * changes, which is also what lets pointer-leave recognise its own entry.
+   */
+  const latest = useRef(handleHoverKey)
+  latest.current = handleHoverKey
+  const fromHover = useRef((event: KeyboardEvent): boolean => latest.current(event)).current
+
+  /**
+   * Let go of the arrows if this field disappears while it is still the hovered
+   * one.
+   *
+   * `pointerleave` never fires on an element that is unmounted from under the
+   * cursor, and the panel unmounts fields constantly — folding a group away,
+   * switching to a different element, ending a text edit. The register would go
+   * on holding a dead field's handler, and every arrow key from then on would be
+   * swallowed by a control that is no longer on screen. Same shape as the Delete
+   * bug: works, works, then quietly stops.
+   */
+  useEffect(
+    () => () => {
+      if (hoveredField.current === fromHover) hoveredField.current = null
+    },
+    [fromHover],
+  )
+
   const onScrub = (event: ReactPointerEvent) => {
+    if (readout) return
     const from = value
     let engaged = false
     startDrag(event.nativeEvent, {
@@ -137,6 +259,15 @@ export function NumberField({
     })
   }
 
+  const word = readout ? (
+    <span
+      aria-label={`${label} — ${readout}`}
+      className={cx('min-w-0 flex-1 truncate text-[11px] text-ink-soft', !fill && 'text-center')}
+    >
+      {readout}
+    </span>
+  ) : null
+
   const field = editing ? (
     <input
       ref={inputRef}
@@ -150,8 +281,9 @@ export function NumberField({
       onBlur={() => setEditing(false)}
       onKeyDown={onFieldKey}
       className={cx(
-        'dm-field rounded-[5px] border border-line bg-paper px-0.5 py-[1px] text-center text-[11px] text-[color:var(--color-select)] tabular-nums',
-        compact ? 'w-[30px]' : 'w-[34px]',
+        'dm-field rounded-[5px] border border-line bg-paper px-0.5 py-[1px] text-[11px] text-[color:var(--color-select)] tabular-nums',
+        fill ? 'w-full min-w-0 flex-1 text-left' : 'text-center',
+        fill ? '' : compact ? 'w-[30px]' : 'w-[34px]',
       )}
     />
   ) : (
@@ -161,14 +293,18 @@ export function NumberField({
       aria-label={`${label} — double-click to type a value`}
       onDoubleClick={open}
       onKeyDown={(event) => {
-        if (event.key === 'Enter') {
-          event.stopPropagation()
+        event.stopPropagation()
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault()
           open()
+          return
         }
+        if (onArrowKey(event)) event.preventDefault()
       }}
       className={cx(
-        'cursor-text rounded-[5px] border border-transparent py-[1px] text-center text-[11px] tabular-nums',
-        compact ? 'w-[27px]' : 'w-[34px] hover:border-line hover:bg-ink/5',
+        'cursor-text rounded-[5px] border border-transparent py-[1px] text-[11px] tabular-nums',
+        fill ? 'min-w-0 flex-1 text-left' : 'text-center',
+        fill ? '' : compact ? 'w-[27px]' : 'w-[34px] hover:border-line hover:bg-ink/5',
         // Blue is the value, grey is everything around it. The label beside
         // this box, the steppers either side and the dash a mixed field
         // shows are all chrome; the number is the only thing here that is
@@ -188,18 +324,59 @@ export function NumberField({
         title={title ?? label}
         aria-label={label}
         onPointerDown={onScrub}
-        className="flex h-[24px] shrink-0 cursor-ew-resize items-center gap-[2px] rounded-[6px] bg-ink/[0.06] pr-[2px] pl-[5px] text-ink-soft"
+        onPointerEnter={() => {
+          hoveredField.current = fromHover
+        }}
+        onPointerLeave={() => {
+          if (hoveredField.current === fromHover) hoveredField.current = null
+        }}
+        /**
+         * A single click opens the box for typing, not just a double.
+         *
+         * Double-click was the only way in, inherited from the days when these
+         * chips sat inches from the page text and a stray single click had to
+         * mean nothing. In a panel there is no such risk, and "click the number,
+         * type the number" is what everyone tries first — the double-click was
+         * costing a discovery every time.
+         *
+         * The scrub is what makes this safe to add: `startDrag` only engages
+         * past its threshold, so a press that travelled is a scrub and its
+         * trailing click is swallowed here exactly as it is everywhere else in
+         * the product. A press that did not travel was a click, and means this.
+         */
+        onClick={(event) => {
+          if (editing || readout || consumedByDrag()) return
+          // The trailing control is a button of its own — a mode caret, a size
+          // menu — and its click is not an invitation to type in the number.
+          if ((event.target as HTMLElement).closest('button')) return
+          open()
+        }}
+        className={cx(
+          'flex h-[24px] items-center gap-[2px] rounded-[6px] bg-ink/[0.06] pr-[2px] pl-[5px] text-ink-soft',
+          readout ? 'cursor-default' : 'cursor-ew-resize',
+          fill ? 'min-w-0 flex-1' : 'shrink-0',
+        )}
       >
         <span aria-hidden className="flex items-center">
           {icon ?? <span className="text-[10px] font-medium">{label}</span>}
         </span>
-        {field}
+        {word ?? field}
+        {trailing}
       </span>
     )
   }
 
   return (
-    <span className="flex shrink-0 items-center" title={title ?? label}>
+    <span
+      className="flex shrink-0 items-center"
+      title={title ?? label}
+      onPointerEnter={() => {
+        hoveredField.current = fromHover
+      }}
+      onPointerLeave={() => {
+        if (hoveredField.current === fromHover) hoveredField.current = null
+      }}
+    >
       <span className="mr-0.5 flex items-center text-[10px] font-medium text-ink-soft">
         {icon ?? label}
       </span>

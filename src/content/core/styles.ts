@@ -90,6 +90,17 @@ export function revertAll(): void {
   for (const el of [...edited]) revert(el)
 }
 
+/**
+ * Every element carrying our changes.
+ *
+ * Exposed for the change report, which needs the elements themselves rather
+ * than the count the badge shows. A copy, because the caller iterates while
+ * deciding what to keep and the live set is written to by every style call.
+ */
+export function editedElements(): HTMLElement[] {
+  return [...edited]
+}
+
 export function editedCount(): number {
   return edited.size
 }

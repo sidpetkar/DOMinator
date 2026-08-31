@@ -163,6 +163,33 @@ export function recordInsert(label: string, nodes: HTMLElement[]): void {
   )
 }
 
+/**
+ * Nodes taken out of the page — deleting a shape you drew or a variation you
+ * lifted. The mirror of `recordInsert`: the removal happens here, and undo puts
+ * each one back in front of the sibling it used to sit in front of.
+ *
+ * Only ever called on nodes this tool created. A page's own element is *hidden*
+ * rather than removed (see `hideSelected`), because taking someone's markup out
+ * of their document is a much larger promise than the Delete key makes.
+ */
+export function recordRemove(label: string, nodes: HTMLElement[]): void {
+  const places: [HTMLElement, Node | null, Node | null][] = nodes.map((node) => [
+    node,
+    node.parentNode,
+    node.nextSibling,
+  ])
+  for (const node of nodes) node.remove()
+  record(
+    label,
+    () => {
+      for (const [node, parent, next] of places) parent?.insertBefore(node, next)
+    },
+    () => {
+      for (const node of nodes) node.remove()
+    },
+  )
+}
+
 export function undo(): Step | null {
   const last = stack.pop()
   if (!last) return null

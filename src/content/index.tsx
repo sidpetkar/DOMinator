@@ -1,8 +1,11 @@
 import { createRoot } from 'react-dom/client'
-import { HOST_ID, OWN_NODE_ATTR } from '@/shared/constants'
+import { EDITOR_PRESENT_ATTR, HOST_ID, OWN_NODE_ATTR } from '@/shared/constants'
 import type { Message, MessageResponse } from '@/shared/messages'
 import { App } from './App'
 import { controller } from './core/controller'
+import * as changes from './core/changes'
+import * as snapshot from './core/snapshot'
+import { readState } from './core/snapshot'
 import { store } from './core/store'
 // Imported as a string so the host document never receives our CSS.
 import overlayCss from './overlay.css?inline'
@@ -137,7 +140,45 @@ chrome.runtime.onMessage.addListener(
 
 mount()
 
+/**
+ * A saved canvas opens as one.
+ *
+ * Double-clicking a `.dom.html` is a request to work on that board, not to look
+ * at a web page that happens to contain one — so the editor comes up by itself,
+ * in canvas mode, at the view it was saved with. Everywhere else the editor
+ * stays inert until it is asked for, which is the posture the rest of this file
+ * is careful about.
+ *
+ * The attribute goes on first and separately. It is how the reader baked into
+ * the file knows to stand down, and it has to be set whether or not activation
+ * succeeds — two bottom bars saying the same thing is the file arguing with the
+ * tool that made it.
+ */
+if (readState()) {
+  document.documentElement.setAttribute(EDITOR_PRESENT_ATTR, '')
+  controller.activate()
+}
+
 // Handle for the local harness (test/fixture.html), which evaluates this bundle
 // in page context. Content scripts run in an isolated world, so a real page can
 // never reach this.
-;(window as unknown as Record<string, unknown>).__dominator = { controller, store }
+;(window as unknown as Record<string, unknown>).__dominator = { controller, store, snapshot, changes }
+
+/**
+ * A saved canvas opens as one.
+ *
+ * Double-clicking a `.dom.html` is a request to work on that board, not to look
+ * at a web page that happens to contain one — so the editor comes up by itself,
+ * in canvas mode, at the view it was saved with. Everywhere else the editor
+ * stays inert until it is asked for, which is the posture the rest of this file
+ * is careful about.
+ *
+ * The attribute goes on first and separately. It is how the reader baked into
+ * the file knows to stand down, and it has to be set whether or not activation
+ * succeeds — two bottom bars saying the same thing is the file arguing with the
+ * tool that made it.
+ */
+if (readState()) {
+  document.documentElement.setAttribute(EDITOR_PRESENT_ATTR, '')
+  controller.activate()
+}

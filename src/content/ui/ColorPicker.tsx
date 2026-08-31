@@ -1,5 +1,13 @@
-import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
+import {
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type PointerEvent as ReactPointerEvent,
+} from 'react'
+import { createPortal } from 'react-dom'
 import { startDrag } from '../core/drag'
+import { zoom } from '../core/zoom'
 import {
   cssColor,
   hexToRgb,
@@ -15,10 +23,13 @@ import {
 } from '../core/color'
 import { store } from '../core/store'
 import { DropperIcon, ResetIcon } from './icons'
-import { cx, POPOVER_ATTR, useDismiss } from './util'
+import { cx, overlayRoot, POPOVER_ATTR, useDismiss, zoomStable } from './util'
 
 const SV_HEIGHT = 108
 const PANEL_WIDTH = 236
+
+/** How far the panel sits from the edge of the control that opened it. */
+const OFFSET = 6
 
 /**
  * Our own picker, because the native one cannot be styled and lands as a black
@@ -45,6 +56,21 @@ export function ColorPicker({
    */
   align = 'right',
   /**
+   * A box the panel must not land on top of — the docked column, in practice.
+   *
+   * The picker hangs off its swatch, and inside a 264px panel that means it
+   * covers the rows underneath the one being edited: you open the fill's colour
+   * and it swallows the stroke, the padding and the radius. Worse, it covers the
+   * *fill row itself* at some scroll positions, so the hex you are matching a
+   * colour against disappears behind the panel you are matching it in.
+   *
+   * Given a box, the panel steps out beside it and stays anchored to the swatch
+   * vertically, which is the arrangement every design tool uses for exactly this
+   * reason. A getter rather than a rect because the column moves — it is
+   * draggable, and it counter-scales with the browser zoom.
+   */
+  avoid,
+  /**
    * Contrast only means something for text. A card's fill or a border colour has
    * no foreground to be legible against, so the readout is dropped rather than
    * shown against an arbitrary pairing.
@@ -66,9 +92,19 @@ export function ColorPicker({
   onReset?: () => void
   dropUp: boolean
   align?: 'left' | 'right'
+  avoid?: (() => DOMRect | null) | null
   showContrast?: boolean
 }) {
   const panelRef = useRef<HTMLDivElement>(null)
+  /**
+   * A marker left behind in the original tree, purely to be measured. The panel
+   * is somewhere else by then, so the control's own box is the only thing that
+   * still knows where the picker should point — and a span with `inset: 0`
+   * inside the control's positioning context reports exactly that box, clipped
+   * or not, since a clip hides pixels rather than moving geometry.
+   */
+  const probeRef = useRef<HTMLSpanElement>(null)
+  const [seat, setSeat] = useState<{ left: number; top: number } | null>(null)
   const svRef = useRef<HTMLDivElement>(null)
   const hueRef = useRef<HTMLDivElement>(null)
   const alphaRef = useRef<HTMLDivElement>(null)
@@ -88,6 +124,54 @@ export function ColorPicker({
    */
   const [draft, setDraft] = useState<string | null>(null)
   useDismiss(panelRef, true, onClose)
+
+  /**
+   * Where the panel sits, recomputed on every render.
+   *
+   * Every render is cheaper than it sounds and is what keeps the picker glued to
+   * its button: the overlay re-renders as the page is tracked, so a panel whose
+   * control has been scrolled, panned or zoomed away corrects itself on the next
+   * frame. The threshold is what stops the state write from looping — a
+   * sub-pixel difference is not a move.
+   */
+  useLayoutEffect(() => {
+    const anchor = probeRef.current?.getBoundingClientRect()
+    const panel = panelRef.current
+    if (!anchor || !panel) return
+    const z = zoom() || 1
+    const width = PANEL_WIDTH / z
+    const height = panel.offsetHeight / z
+    const gap = OFFSET / z
+    // Trails to whichever side the caller asked for, then is pulled back inside
+    // the window: a control near an edge would otherwise hang its picker off it,
+    // which is the same bug in the other direction.
+    /**
+     * Outside the panel when there is one, on whichever side has the room —
+     * left first, since the column this exists for is docked to the right.
+     */
+    const blocked = avoid?.() ?? null
+    const beside = blocked
+      ? blocked.left - gap - width >= 8
+        ? blocked.left - gap - width
+        : blocked.right + gap
+      : null
+
+    const wanted = {
+      left: clampInto(
+        beside ?? (align === 'left' ? anchor.left : anchor.right - width),
+        width,
+        window.innerWidth,
+      ),
+      top: clampInto(
+        dropUp ? anchor.top - gap - height : anchor.bottom + gap,
+        height,
+        window.innerHeight,
+      ),
+    }
+    if (!seat || Math.abs(seat.left - wanted.left) > 0.5 || Math.abs(seat.top - wanted.top) > 0.5) {
+      setSeat(wanted)
+    }
+  })
 
   // Follow the element when its colour changes from outside — a reset, or an
   // undo — without fighting our own writes during a drag.
@@ -205,6 +289,16 @@ export function ColorPicker({
     try {
       const { sRGBHex } = await new Picker().open()
       commit(hexToRgb(sRGBHex), alpha)
+      /**
+       * And that is the end of it.
+       *
+       * Sampling a colour off the screen is not a step towards choosing one, it
+       * *is* choosing one — you went out to the page, found the exact pixel you
+       * wanted, and the answer is now applied. Leaving the panel open afterwards
+       * meant the thing you had just matched was still hidden behind it, so the
+       * next action was always to dismiss it and look.
+       */
+      onClose()
     } catch {
       /* dismissed */
     } finally {
@@ -212,12 +306,29 @@ export function ColorPicker({
     }
   }
 
-  return (
+  const panel = (
     <div
       ref={panelRef}
       {...{ [POPOVER_ATTR]: '' }}
-      className={cx('dm-panel absolute overflow-hidden', align === 'left' ? 'left-0' : 'right-0')}
-      style={{ width: PANEL_WIDTH, ...(dropUp ? { bottom: 30 } : { top: 30 }) }}
+      /**
+       * `dm-interactive` is not decoration here: the overlay root is
+       * `pointer-events: none` and every layer opts back in. Inside the element
+       * bar the picker inherited that from the panel around it; portalled to the
+       * root it has no such parent, and without this the whole picker was
+       * click-through — the eyedropper, the sliders and the hex box all silently
+       * selecting whatever page element happened to be underneath.
+       */
+      className="dm-panel dm-interactive overflow-hidden"
+      style={{
+        position: 'fixed',
+        width: PANEL_WIDTH,
+        left: seat?.left ?? 0,
+        top: seat?.top ?? 0,
+        // Nothing is drawn until it has been told where to go: one frame in the
+        // corner of the window is a flash everybody sees.
+        visibility: seat ? 'visible' : 'hidden',
+        ...zoomStable(zoom(), 'top left'),
+      }}
       onPointerDown={(event) => event.stopPropagation()}
     >
       {/* saturation / value */}
@@ -366,7 +477,19 @@ export function ColorPicker({
       )}
     </div>
   )
+
+  const root = overlayRoot()
+  return (
+    <>
+      <span ref={probeRef} aria-hidden className="pointer-events-none absolute inset-0" />
+      {root ? createPortal(panel, root) : panel}
+    </>
+  )
 }
+
+/** Keeps a panel of the given size inside the window, with 8px to spare. */
+const clampInto = (value: number, size: number, limit: number): number =>
+  Math.max(8, Math.min(value, limit - size - 8))
 
 /**
  * The "nothing behind this" pattern, as a pair of offset gradients rather than

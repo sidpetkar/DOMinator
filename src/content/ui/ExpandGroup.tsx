@@ -48,3 +48,47 @@ export function ExpandGroup({
     </div>
   )
 }
+
+/**
+ * The same fold, turned ninety degrees: a row of controls that drops out from
+ * under the row that stands for it.
+ *
+ * The docked panel is a column 264px wide, and four number chips laid side by
+ * side do not fit across it — the horizontal fold above would either overflow
+ * or shrink every chip until its number had two characters of room. Downwards
+ * there is as much space as the group needs, so the four sides land as a 2×2
+ * block under their own heading, which is also where anyone arriving from a
+ * design tool expects to find them.
+ *
+ * `grid-template-rows` for the same reason the other one uses columns: it
+ * animates to the content's natural height with nothing measured, so a row that
+ * grows a second line of chips still opens to exactly its own size.
+ */
+export function ExpandRows({
+  open,
+  gap = 4,
+  children,
+}: {
+  open: boolean
+  /** Must match the parent column's gap, or folding leaves a hole. */
+  gap?: number
+  children: ReactNode
+}) {
+  return (
+    <div
+      aria-hidden={!open}
+      inert={!open}
+      style={{
+        display: 'grid',
+        gridTemplateRows: open ? '1fr' : '0fr',
+        overflow: 'hidden',
+        marginBottom: open ? 0 : -gap,
+        transition:
+          'grid-template-rows 220ms cubic-bezier(0.2, 0.8, 0.2, 1), opacity 160ms ease, margin-bottom 220ms cubic-bezier(0.2, 0.8, 0.2, 1)',
+        opacity: open ? 1 : 0,
+      }}
+    >
+      <div className="min-h-0">{children}</div>
+    </div>
+  )
+}

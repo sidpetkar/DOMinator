@@ -90,6 +90,10 @@
 
 .dm-scroll::-webkit-scrollbar {
   width: 9px;
+  /* The horizontal track needs its own size: `width` alone leaves a sideways
+     scrollbar at the browser's default height, which is twice this and reads as
+     a second piece of furniture at the foot of the panel. */
+  height: 9px;
 }
 
 .dm-scroll::-webkit-scrollbar-track {
@@ -131,6 +135,23 @@
 .dm-field:focus,
 .dm-field:focus-visible {
   border-color: var(--color-select) !important;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-select) 28%, transparent);
+}
+
+/* A field that *is* its row rather than a box inside one — the font search, a
+   hex box in a grey chip. The ring is drawn around a shape that has no edge of
+   its own, so it lands as a blue halo floating inside another control; the
+   caret is the only focus signal such a field needs. */
+.dm-field.dm-bare:focus,
+.dm-field.dm-bare:focus-visible {
+  border-color: transparent !important;
+  box-shadow: none;
+}
+
+/* Our dropdowns keep a keyboard ring, since unlike a text field they have
+   nothing else to say they have the focus. */
+.dm-select:focus-visible {
+  outline: none;
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-select) 28%, transparent);
 }
 
@@ -205,4 +226,19 @@
     animation-duration: 1ms;
     opacity: 0;
   }
+}
+
+/* The layer tree's per-row eye: out of the way until the row is pointed at,
+   and always there on a row that is actually hidden (see LayerTree.tsx). */
+[data-layer-row]:hover .dm-row-eye {
+  opacity: 1;
+}
+.dm-row-eye svg {
+  border-radius: 4px;
+}
+.dm-row-eye:hover svg {
+  outline: 3px solid color-mix(in srgb, var(--color-ink) 10%, transparent);
+  outline-offset: 1px;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--color-ink) 10%, transparent);
 }

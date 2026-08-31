@@ -7,6 +7,39 @@ export type HandleId = 'nw' | 'n' | 'ne' | 'e' | 'se' | 's' | 'sw' | 'w'
 
 export const HANDLES: readonly HandleId[] = ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w']
 
+/** The four that are always drawn: a corner is unambiguous at any size. */
+const CORNERS: readonly HandleId[] = ['nw', 'ne', 'se', 'sw']
+
+/**
+ * Below this, an edge has no middle worth aiming at.
+ *
+ * A handle is 9px wide. On an edge much shorter than this its midpoint sits
+ * within a few pixels of both corners, so all it can do is take presses meant
+ * for them — which is what made the middles feel like a hazard on small
+ * elements and made removing them outright seem like the answer. They are not a
+ * hazard on a section eight hundred pixels wide; they are the fastest way to
+ * change one dimension.
+ */
+const EDGE_MIN = 60
+
+/**
+ * The handles this particular box gets.
+ *
+ * Per edge, and measured in *screen* pixels rather than page ones: a card is
+ * only as grabbable as it looks, and at 30% zoom a 200px edge is sixty pixels of
+ * actual glass. So a wide short card shows its corners plus top and bottom, a
+ * tall narrow one shows its corners plus left and right, something large shows
+ * all eight, and an icon shows four.
+ */
+export function handlesFor(width: number, height: number): readonly HandleId[] {
+  const handles = [...CORNERS]
+  // `n`/`s` ride the horizontal edges, so it is the *width* that has to be long
+  // enough to hold them — and the other way about for `e`/`w`.
+  if (width >= EDGE_MIN) handles.push('n', 's')
+  if (height >= EDGE_MIN) handles.push('e', 'w')
+  return handles
+}
+
 export const HANDLE_CURSOR: Record<HandleId, string> = {
   nw: 'nwse-resize',
   n: 'ns-resize',

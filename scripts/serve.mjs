@@ -1,5 +1,5 @@
 import { createServer } from 'node:http'
-import { readFile } from 'node:fs/promises'
+import { readFile, writeFile } from 'node:fs/promises'
 import { extname, join, normalize } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -62,6 +62,23 @@ async function googleFonts(url) {
 
 createServer(async (req, res) => {
   const url = new URL(req.url ?? '/', 'http://localhost')
+
+  /**
+   * The harness's disk. `POST /__save` writes a body to `test/`, so a canvas
+   * built in the page can be round-tripped back through the server and reopened
+   * as a real file — which is the only way to exercise the saved format end to
+   * end without an extension installed.
+   */
+  if (req.method === 'POST' && url.pathname === '/__save') {
+    const name = (url.searchParams.get('name') ?? 'saved.dom.html').replace(/[^\w.-]/g, '')
+    const chunks = []
+    for await (const chunk of req) chunks.push(chunk)
+    await writeFile(join(root, 'test', name), Buffer.concat(chunks))
+    res.writeHead(200, { 'content-type': 'application/json' })
+    res.end(JSON.stringify({ ok: true, path: `/test/${name}` }))
+    return
+  }
+
   if (url.pathname.startsWith('/gf/')) {
     const body = await googleFonts(url).catch((error) => ({ ok: false, error: String(error) }))
     res.writeHead(200, { 'content-type': 'application/json' })

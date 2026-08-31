@@ -418,6 +418,19 @@ function absolutise(el: Element, base: string): void {
   }
 }
 
+/**
+ * Whether this canvas is already a picture of a canvas.
+ *
+ * A `<canvas>` in a *reopened* snapshot is genuinely blank — the script that
+ * drew it was dropped when the file was written, which is the whole point of a
+ * frozen page — while the picture it drew survives as the background image put
+ * there by the save before. Capturing it again would therefore replace a good
+ * picture with a transparent one, and every re-save of a reopened board would
+ * quietly erase another canvas. Found by saving a file twice.
+ */
+const carriesCapture = (computed: CSSStyleDeclaration): boolean =>
+  computed.getPropertyValue('background-image').includes('data:image')
+
 /** Attributes that would run code or re-declare our own bookkeeping. */
 function scrub(el: Element): void {
   for (const attr of [...el.attributes]) {
@@ -466,7 +479,7 @@ function inline(source: Element, clone: Element, inherited: CSSStyleDeclaration 
    * a snapshot rather than a live canvas, which is the honest most that can cross
    * a tab boundary, and far better than an empty rectangle.
    */
-  if (source instanceof HTMLCanvasElement) {
+  if (source instanceof HTMLCanvasElement && !carriesCapture(computed)) {
     try {
       decls.push(`background-image:url(${source.toDataURL()})`, 'background-size:100% 100%')
     } catch {
@@ -494,8 +507,22 @@ function inline(source: Element, clone: Element, inherited: CSSStyleDeclaration 
   return count
 }
 
-/** Turns a selection into self-contained markup, or says why it can't. */
-export function serialize(elements: Element[]): SerializeResult {
+/**
+ * Turns a selection into self-contained markup, or says why it can't.
+ *
+ * The budget is a parameter because the two callers are not doing the same
+ * thing. A cross-tab copy has to fit through `chrome.storage.session` and be
+ * quick, so it stops at a section's worth; saving a canvas to a file is a
+ * deliberate, once-in-a-while act that has to carry a whole page, and refusing
+ * at 1500 nodes would mean the save button simply does not work on most of the
+ * web. Same machinery, different appetite.
+ */
+export function serialize(
+  elements: Element[],
+  limits: { maxNodes?: number; maxBytes?: number } = {},
+): SerializeResult {
+  const maxNodes = limits.maxNodes ?? MAX_NODES
+  const maxBytes = limits.maxBytes ?? MAX_BYTES
   try {
     let nodes = 0
     const parts: string[] = []
@@ -503,7 +530,7 @@ export function serialize(elements: Element[]): SerializeResult {
       if (DROP.has(el.tagName.toUpperCase())) continue
       const clone = el.cloneNode(true) as Element
       nodes += inline(el, clone, null)
-      if (nodes > MAX_NODES) {
+      if (nodes > maxNodes) {
         return { ok: false, reason: 'Too big to share across tabs — copied for this tab only' }
       }
       parts.push(clone.outerHTML)
@@ -511,7 +538,7 @@ export function serialize(elements: Element[]): SerializeResult {
     if (!parts.length) return { ok: false, reason: 'Nothing in that selection can travel' }
 
     const html = parts.join('')
-    if (html.length > MAX_BYTES) {
+    if (html.length > maxBytes) {
       return { ok: false, reason: 'Too big to share across tabs — copied for this tab only' }
     }
     return { ok: true, html, nodes }

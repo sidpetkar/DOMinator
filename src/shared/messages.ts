@@ -42,9 +42,18 @@ export type WorkerRequest =
   | { type: 'capture:viewport' }
   /** The tab's browser zoom factor — 0.25 at 25%, 1 at 100%. */
   | { type: 'zoom:get' }
+  /**
+   * One asset — an image, a font, a stylesheet — as a data: URI.
+   *
+   * Through the worker for the same reason fonts are: its fetches answer to our
+   * host permissions rather than to the host page's CSP, and a saved canvas that
+   * is meant to work on a plane cannot be pointing at somebody's CDN.
+   */
+  | { type: 'asset:fetch'; url: string; asText?: boolean }
 
 export type WorkerResponse =
   | { ok: true; fonts: FontMeta[] }
+  | { ok: true; asset: string; bytes: number }
   | { ok: true; data: string }
   | { ok: true; id: number }
   | { ok: true; zoom: number }
