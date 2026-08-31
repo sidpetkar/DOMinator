@@ -2,7 +2,8 @@ import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointer
 import { OWN_NODE_ATTR } from '@/shared/constants'
 import { LOGO_DATA_URL } from '@/shared/logo'
 import { controller } from '../core/controller'
-import { frameOf, isFrame } from '../core/frames'
+import * as frames from '../core/frames'
+import { isFrame } from '../core/frames'
 import { startDrag } from '../core/drag'
 import { nodeOf, store, type EditorSnapshot } from '../core/store'
 import { zoom } from '../core/zoom'
@@ -11,17 +12,39 @@ import {
   applyDrop,
   childrenOf,
   dropAt,
-  hasChildren,
   label,
   preview,
   type TreeDrop,
 } from '../core/tree'
-import { SearchIcon } from './icons'
+import {
+  EyeIcon,
+  EyeOffIcon,
+  FrameIcon,
+  GridIcon,
+  SearchIcon,
+  StackIcon,
+  TextIcon,
+  TwistyIcon,
+} from './icons'
 import { PanelCollapse } from './PanelCollapse'
+import { PanelGrip, usePanelDrag } from './PanelGrip'
 import { cx, dockedBox, useFadingScroll, zoomStable } from './util'
 
 const ROW_HEIGHT = 22
-const INDENT = 11
+
+/**
+ * One level of nesting, and the row's own left inset.
+ *
+ * Widened from 11. At eleven the guide for one level landed inside the *next*
+ * level's twisty — the lines and the chevrons were fighting for the same three
+ * pixels, and on a page five containers deep the result was a hatch rather than
+ * a ladder. Fourteen is the smallest indent where a 10px chevron and the guide
+ * behind it are visibly separate things.
+ */
+const INDENT = 14
+const PAD = 8
+/** The twisty's box, and so the column every guide runs down the middle of. */
+const TWISTY = 13
 
 /**
  * The layers panel: the page as a tree you can pick things out of and rearrange.
@@ -40,10 +63,24 @@ const INDENT = 11
  */
 export function LayerTree({ snapshot }: { snapshot: EditorSnapshot }) {
   const { selected, hovered } = snapshot
+  /**
+   * Every element in the selection, not just the one the panels act on.
+   *
+   * Marquee four cards on the canvas and the tree lit exactly one row — which is
+   * the tree disagreeing with the screen about what is selected, and the tree is
+   * the thing you look at to find out.
+   */
+  const picked = useMemo(
+    () => new Set<Element>([selected?.el, ...snapshot.extras.map((node) => node.el)].filter(Boolean) as Element[]),
+    [selected, snapshot.extras],
+  )
   const [open, setOpen] = useState<Set<Element>>(() => new Set())
   const [query, setQuery] = useState('')
   const [drag, setDrag] = useState<{ el: HTMLElement; drop: TreeDrop | null } | null>(null)
   const listRef = useRef<HTMLDivElement>(null)
+  /** Where a Shift range counts from — see `pick`. */
+  const anchor = useRef<HTMLElement | null>(null)
+  const panelRef = useRef<HTMLDivElement>(null)
   const collapsed = Boolean(snapshot.collapsed.tree)
   const fold = (which: 'tree' | 'controls') => controller.foldPanel(which)
   // Held at a constant physical size, exactly as the floating bars are: zooming
@@ -51,6 +88,13 @@ export function LayerTree({ snapshot }: { snapshot: EditorSnapshot }) {
   // legible, and it was the moment they used to shrink.
   const z = zoom() || 1
   useFadingScroll(listRef, !collapsed)
+  /**
+   * The docked panels are draggable too now, for the reason the floating ones
+   * always were: each of them is sometimes on top of the thing you are looking
+   * at. A dock is a good default position, not a good permanent one — and
+   * double-clicking the grip puts it back.
+   */
+  const grip = usePanelDrag('tree', panelRef)
 
   /**
    * The path to the selection opens itself. Selecting on the canvas and then
@@ -90,6 +134,43 @@ export function LayerTree({ snapshot }: { snapshot: EditorSnapshot }) {
     if (seat.top < pane.top) list.scrollTop -= pane.top - seat.top
     else if (seat.bottom > pane.bottom) list.scrollTop += seat.bottom - pane.bottom
   }, [selected, open])
+
+  /**
+   * Picking a row, with the two modifiers every list in the world uses.
+   *
+   * Plain replaces the selection. Ctrl or Cmd adds and removes one row, which is
+   * what you want when the things you need are scattered. Shift takes everything
+   * between the last row you picked and this one — and it walks the *rendered*
+   * list rather than the DOM, so a range never quietly includes rows that are
+   * folded away and invisible.
+   *
+   * The anchor is the last plain or toggled pick, not the last selection: with
+   * the anchor moving on every Shift+click, extending a range twice would keep
+   * shrinking it to the pair you were on.
+   */
+  const pick = (el: HTMLElement, event: React.MouseEvent) => {
+    if (event.shiftKey && anchor.current) {
+      const from = visible.indexOf(anchor.current)
+      const to = visible.indexOf(el)
+      if (from !== -1 && to !== -1) {
+        const [start, end] = from < to ? [from, to] : [to, from]
+        const run = visible.slice(start, end + 1).filter((node) => node !== document.body)
+        if (run.length) {
+          controller.selectMany(run)
+          return
+        }
+      }
+    }
+    anchor.current = el
+    if (event.ctrlKey || event.metaKey) {
+      controller.toggleInSelection(el)
+      return
+    }
+    controller.select(el)
+    // The tree exists to reach things you cannot see, so picking one has to
+    // bring the page to it.
+    controller.reveal(el)
+  }
 
   const toggle = (el: Element) =>
     setOpen((current) => {
@@ -164,15 +245,37 @@ export function LayerTree({ snapshot }: { snapshot: EditorSnapshot }) {
   }
 
   const rows: React.ReactNode[] = []
+  /**
+   * The rows as they are actually laid out, which is the only order a
+   * Shift+click range can mean. Document order would be the wrong answer: a
+   * collapsed subtree contributes nothing to the list, so a range drawn between
+   * two visible rows must not sweep up forty elements hidden between them.
+   */
+  const visible: HTMLElement[] = []
+  /**
+   * A canvas object is not part of the page, so it is not drawn inside it.
+   *
+   * They live as absolutely-positioned children of `body` — that is what puts
+   * them in canvas coordinates (see frames.ts) — but that is an implementation
+   * detail of the surface, not a statement about the document, and showing a
+   * lifted section nested under `body` next to the page's own wrapper said the
+   * opposite of what the canvas had just done. Filtered here rather than in
+   * tree.ts because it is true of this panel's *presentation*, not of the tree.
+   */
+  const kids = (el: HTMLElement): HTMLElement[] =>
+    el === document.body ? childrenOf(el).filter((child) => !isFrame(child)) : childrenOf(el)
+
   const walk = (el: HTMLElement, depth: number) => {
     const expanded = open.has(el)
+    visible.push(el)
     rows.push(
       <Row
         key={rowKey(el, rows.length)}
         el={el}
         depth={depth}
         expanded={expanded}
-        selected={selected?.el === el}
+        selected={picked.has(el)}
+        primary={selected?.el === el}
         hovered={hovered?.el === el}
         matched={matches?.has(el) ?? false}
         dimmed={Boolean(matches) && !matches?.has(el)}
@@ -180,30 +283,37 @@ export function LayerTree({ snapshot }: { snapshot: EditorSnapshot }) {
         drop={drag?.drop?.target === el ? drag.drop.where : null}
         onToggle={() => toggle(el)}
         onGrab={beginDrag(el)}
+        onPick={(event) => pick(el, event)}
+        /* A root that is not the first stands clear of the tree above it: the
+           page and each canvas object are separate things, and rows butted
+           together read as one list of siblings. */
+        detached={depth === 0 && rows.length > 0}
       />,
     )
     if (!expanded) return
-    for (const child of childrenOf(el)) walk(child, depth + 1)
+    for (const child of kids(el)) walk(child, depth + 1)
   }
   /**
-   * Rooted at the selected variation when there is one, and at the page
-   * otherwise.
+   * The page, and then everything standing beside it on the canvas.
    *
-   * A variation is a thing you are working on rather than a thing in the page,
-   * and while you are inside one the forty rows of document around it are
-   * nothing but distance between you and the four you care about. Deselect, or
-   * pick something in the page, and the whole tree comes back.
+   * Each object is its own root rather than a row under `body`, because that is
+   * what it is: a thing on the surface, a sibling of the page and not a part of
+   * it. This replaced an earlier rule that rooted the whole tree at the selected
+   * variation and hid everything else — which made sense while a variation was
+   * the only kind of loose object there was, and stopped making sense the moment
+   * there could be six of them and you needed to see the list.
    */
-  const root = (selected && frameOf(selected.el)) ?? document.body
-  if (root) walk(root, 0)
+  if (document.body) walk(document.body, 0)
+  for (const object of frames.all()) walk(object, 0)
 
   return (
     <div
+      ref={panelRef}
       className="dm-panel dm-interactive flex flex-col overflow-hidden"
       style={{
         position: 'fixed',
-        left: 12,
-        top: 12,
+        left: grip.pinned ? grip.pinned.left : 12,
+        top: grip.pinned ? grip.pinned.top : 12,
         width: 252,
         // Hugs its rows rather than reaching for the bottom of the window. A
         // panel that is always full height is mostly empty on a short page, and
@@ -217,6 +327,7 @@ export function LayerTree({ snapshot }: { snapshot: EditorSnapshot }) {
           — the three pieces of chrome read as one product rather than as three
           panels that happen to be on screen together. */}
       <div className="flex items-center gap-1.5 border-b border-line px-2.5 py-1.5">
+        <PanelGrip onGrab={grip.onGrab} reset={grip.reset} />
         <img
           src={LOGO_DATA_URL}
           alt=""
@@ -235,9 +346,20 @@ export function LayerTree({ snapshot }: { snapshot: EditorSnapshot }) {
         <>
           <div
             ref={listRef}
-            className="dm-scroll min-h-0 flex-1 overflow-x-hidden overflow-y-auto py-1"
+            className="dm-scroll min-h-0 flex-1 overflow-auto py-1"
           >
-            {rows}
+            {/*
+             * Wide as its widest row, not as the panel.
+             *
+             * The rows used to truncate, which on a page of
+             * `.Body-module-scss-module__z40yvW` class names meant every row
+             * ended in an ellipsis and the panel showed the half of each name
+             * that is identical to every other. `min-width: max-content` lets
+             * the pane scroll sideways to the full name instead, and the rows
+             * inherit their width from it so the selected row's tint and the
+             * indent guides still run the whole way across.
+             */}
+            <div style={{ minWidth: 'max-content' }}>{rows}</div>
           </div>
 
           {/* Only while a drag is in flight. The standing hint it replaced was a
@@ -312,6 +434,7 @@ function Row({
   depth,
   expanded,
   selected,
+  primary,
   hovered,
   matched,
   dimmed,
@@ -319,11 +442,15 @@ function Row({
   drop,
   onToggle,
   onGrab,
+  onPick,
+  detached = false,
 }: {
   el: HTMLElement
   depth: number
   expanded: boolean
   selected: boolean
+  /** The one the single-target controls act on — the only row that scrolls to. */
+  primary: boolean
   hovered: boolean
   matched: boolean
   dimmed: boolean
@@ -331,6 +458,9 @@ function Row({
   drop: 'before' | 'after' | 'inside' | null
   onToggle: () => void
   onGrab: (event: ReactPointerEvent) => void
+  onPick: (event: React.MouseEvent) => void
+  /** A second or later root — the page, then each thing standing beside it. */
+  detached?: boolean
 }) {
   const ref = useRef<HTMLDivElement>(null)
   useEffect(() => {
@@ -338,33 +468,35 @@ function Row({
     if (row) ROW_ELEMENTS.set(row, el)
   })
 
-  const branches = hasChildren(el)
+  // Asks the same question the walk answers, so `body` on a canvas holding
+  // nothing but objects does not offer a twisty that opens onto nothing.
+  const branches = childCount(el) > 0
   const text = preview(el)
+  const concealed = el.style.display === 'none'
 
   return (
     <div
       ref={ref}
       data-layer-row=""
-      data-selected={selected ? 'true' : undefined}
+      data-selected={primary ? 'true' : undefined}
       onPointerDown={onGrab}
-      onClick={() => {
-        controller.select(el)
-        // The tree exists to reach things you cannot see, so picking one has to
-        // bring the page to it.
-        controller.reveal(el)
-      }}
+      onClick={onPick}
       /* Hovering a row lights the element up on the page, which is most of how
          you find your way around a tree of anonymous divs. */
       onPointerEnter={() => store.set({ hovered: nodeOf(el) })}
       onPointerLeave={() => store.set({ hovered: null })}
       className={cx(
-        'relative flex cursor-default items-center gap-1 py-[3px] pr-2 text-[11px]',
+        'relative flex min-w-full cursor-default items-center gap-1 py-[3px] pr-2 text-[11px]',
         selected ? 'bg-[color:var(--color-select)] text-paper' : 'text-ink hover:bg-ink/5',
         hovered && !selected && 'bg-ink/5',
         dragging && 'opacity-40',
         dimmed && !selected && 'opacity-35',
       )}
-      style={{ paddingLeft: 6 + depth * INDENT, minHeight: ROW_HEIGHT }}
+      style={{
+        paddingLeft: PAD + depth * INDENT,
+        minHeight: ROW_HEIGHT,
+        marginTop: detached ? 10 : undefined,
+      }}
     >
       <Guides depth={depth} selected={selected} />
       {/* The landing line, drawn on the row it lands against — a rule at the
@@ -387,18 +519,41 @@ function Row({
           onToggle()
         }}
         className={cx(
-          'grid h-[13px] w-[13px] shrink-0 place-items-center rounded-[3px] border-0 bg-transparent p-0 text-[8px] leading-none',
+          'grid shrink-0 place-items-center rounded-[3px] border-0 bg-transparent p-0 leading-none',
           branches ? 'cursor-pointer opacity-70 hover:opacity-100' : 'invisible',
           selected ? 'text-paper' : 'text-ink-soft',
         )}
-        style={{ transform: expanded ? 'rotate(90deg)' : undefined }}
+        style={{
+          height: TWISTY,
+          width: TWISTY,
+          // Down when open, right when shut, and it turns between the two.
+          transform: expanded ? undefined : 'rotate(-90deg)',
+          transition: 'transform 120ms ease',
+        }}
       >
-        ▶
+        <TwistyIcon />
       </button>
+
+      {/**
+       * What the row *is*, before what it is called.
+       *
+       * A tree of `div.wrapper` under `div.inner` under `div.row` tells you
+       * nothing about the thing you are looking for, and the one fact that
+       * actually distinguishes them — this one stacks its children downward,
+       * that one across — was only discoverable by selecting each in turn and
+       * reading the Stack control. Putting it on the row is how you find the
+       * right container without opening five of them.
+       */}
+      <span
+        aria-hidden
+        className={cx('flex shrink-0 items-center', selected ? 'text-paper/80' : 'text-ink-soft')}
+      >
+        <KindIcon el={el} />
+      </span>
 
       <span
         className={cx(
-          'truncate font-medium',
+          'font-medium whitespace-nowrap',
           matched && !selected && 'text-[color:var(--color-select)]',
         )}
         style={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}
@@ -406,16 +561,72 @@ function Row({
         {label(el)}
       </span>
 
+      {/* A fixed gap rather than `ml-auto`: the row is now as wide as its
+          content, so "push to the right edge" has nothing to push against — it
+          would sit against the name on every row and against the panel edge on
+          none. */}
       {text && (
         <span
           className={cx(
-            'ml-auto max-w-[86px] truncate text-[10px]',
+            'ml-3 max-w-[86px] shrink-0 truncate text-[10px]',
             selected ? 'text-paper/70' : 'text-ink-soft',
           )}
         >
           {text}
         </span>
       )}
+
+      {/**
+       * The eye, on hover — or always, once it is doing something.
+       *
+       * Hidden by default because a column of eyes down a tree of two hundred
+       * rows is a column of noise: the answer is "visible" for all but a handful
+       * of them, and a control that states the default on every row is a control
+       * nobody reads. It appears under the pointer, which is where you are when
+       * you want it, and stays put on anything actually hidden — that one is not
+       * a control any more, it is the only sign the element still exists.
+       *
+       * Pinned right, and outside the row's scrolling width: the rows are as
+       * wide as the widest name, so an eye in the flow would sit at a different
+       * distance on every row and scroll off with the text.
+       */}
+      <span
+        onPointerDown={(event) => event.stopPropagation()}
+        onClick={(event) => {
+          event.stopPropagation()
+          controller.toggleVisible(el)
+        }}
+        role="button"
+        tabIndex={-1}
+        aria-label={concealed ? `Show ${label(el)}` : `Hide ${label(el)}`}
+        title={concealed ? 'Show this element' : 'Hide this element'}
+        className={cx(
+          'dm-row-eye sticky right-0 ml-auto flex h-[18px] shrink-0 cursor-pointer items-center justify-end pr-1 pl-4',
+          concealed ? 'opacity-100' : 'opacity-0',
+          selected ? 'text-paper' : 'text-ink-soft',
+        )}
+        /**
+         * A fade, not a hard edge.
+         *
+         * The rows are as wide as the longest class name in the tree, so a name
+         * long enough to need the horizontal scrollbar runs straight under this
+         * — and an eye sitting on top of `Body-module-scss__z40yvW` is unreadable
+         * twice over. The gradient is the row's own colour dissolving in from
+         * the left, which hides whatever is behind it without drawing a border
+         * that would read as a column.
+         *
+         * `ml-auto` as well as `sticky`: the first pushes it to the end of a row
+         * narrower than the panel, the second pins it to the panel's edge on a
+         * row wider than it. Neither alone covers both.
+         */
+        style={{
+          background: `linear-gradient(to right, transparent, ${
+            selected ? 'var(--color-select)' : 'var(--color-paper)'
+          } 55%)`,
+        }}
+      >
+        {concealed ? <EyeOffIcon /> : <EyeIcon />}
+      </span>
     </div>
   )
 }
@@ -445,7 +656,7 @@ function Row({
  * ladder is more distracting than the ladder.
  */
 function Guides({ depth, selected }: { depth: number; selected: boolean }) {
-  const tint = selected ? 'rgba(255,255,255,.5)' : 'rgba(11,11,12,.32)'
+  const tint = selected ? 'rgba(255,255,255,.45)' : 'rgba(11,11,12,.22)'
   return (
     <>
       {Array.from({ length: depth }, (_, level) => (
@@ -454,29 +665,36 @@ function Guides({ depth, selected }: { depth: number; selected: boolean }) {
           aria-hidden
           className="pointer-events-none absolute top-0 bottom-0"
           style={{
-            left: 11 + level * INDENT,
+            // Down the middle of the twisty belonging to that level, which is
+            // what makes a guide look like it descends *from* its parent row
+            // rather than running alongside the whole column.
+            left: PAD + level * INDENT + Math.floor(TWISTY / 2),
             width: 1,
             backgroundImage: `repeating-linear-gradient(to bottom, ${tint} 0 2px, transparent 2px 4px)`,
           }}
         />
       ))}
-      {/* The elbow into this row, so a row reads as hanging off its parent's
-          line rather than merely sitting near it. */}
-      {depth > 0 && (
-        <span
-          aria-hidden
-          className="pointer-events-none absolute"
-          style={{
-            left: 11 + (depth - 1) * INDENT,
-            top: '50%',
-            height: 1,
-            width: INDENT - 3,
-            backgroundImage: `repeating-linear-gradient(to right, ${tint} 0 2px, transparent 2px 4px)`,
-          }}
-        />
-      )}
     </>
   )
+}
+
+/**
+ * The mark at the head of a row.
+ *
+ * Read off the live computed style rather than stored, like everything else in
+ * this product: change a container from a column to a row and the tree says so
+ * on the next frame, with nothing to keep in sync.
+ */
+function KindIcon({ el }: { el: HTMLElement }) {
+  const style = window.getComputedStyle(el)
+  const display = style.display
+  if (display.includes('grid')) return <GridIcon />
+  if (display.includes('flex')) {
+    return <StackIcon axis={style.flexDirection.startsWith('row') ? 'row' : 'column'} />
+  }
+  // A leaf with words in it is a text layer, whatever tag it happens to be.
+  if (!childCount(el) && (el.textContent ?? '').trim()) return <TextIcon />
+  return <FrameIcon />
 }
 
 const Edge = ({ side }: { side: 'top' | 'bottom' }) => (
@@ -488,3 +706,12 @@ const Edge = ({ side }: { side: 'top' | 'bottom' }) => (
 
 /** Marks our own nodes, so the picker never treats a tree row as a page target. */
 export const LAYER_PANEL_ATTR = OWN_NODE_ATTR
+
+/**
+ * How many rows a given row would open onto — the page's own children for
+ * `body`, since the canvas objects beside it are roots of their own.
+ */
+function childCount(el: HTMLElement): number {
+  const children = childrenOf(el)
+  return el === document.body ? children.filter((child) => !isFrame(child)).length : children.length
+}

@@ -11,8 +11,12 @@ import { GapOverlay } from './ui/GapOverlay'
 import { GroupPrompt } from './ui/GroupPrompt'
 import { MeasureChrome } from './ui/MeasureChrome'
 import { HoverOutline } from './ui/HoverOutline'
+import { PeerOutlines } from './ui/PeerOutlines'
+import { CanvasPanel } from './ui/CanvasPanel'
 import { ElementBar } from './ui/ElementBar'
+import { FrameLabel } from './ui/FrameLabel'
 import { LayerTree } from './ui/LayerTree'
+import { Marquee } from './ui/Marquee'
 import { SelectionFrame } from './ui/SelectionFrame'
 import { ScreenshotOverlay } from './ui/ScreenshotOverlay'
 import { SelectionWash } from './ui/SelectionWash'
@@ -43,6 +47,7 @@ export function App() {
     lens,
     flash,
     layers,
+    band,
   } = snapshot
 
   // Screenshot mode owns the screen: the editing chrome would only be
@@ -77,7 +82,14 @@ export function App() {
           you cannot judge a colour through. */}
       {lens && !preview && <AuditOverlay lens={lens} />}
 
-      {hovered && interaction === 'idle' && !editing && <HoverOutline node={hovered} />}
+      {/* The level you are pointing at: its other members first, so the solid
+          line of the one under the cursor paints over them. */}
+      {hovered && interaction === 'idle' && !editing && (
+        <>
+          <PeerOutlines peers={snapshot.peers} />
+          <HoverOutline node={hovered} />
+        </>
+      )}
 
       {/* One element: the full editor. Several: the same measurements on each,
           with the single-target controls withheld. */}
@@ -120,9 +132,35 @@ export function App() {
        * shift-clicked a second element would leave a hole in the layout, which
        * a floating bar disappearing never does.
        */}
-      {selected && !editing && !moving && (layers || !comparing) && (
-        <ElementBar node={selected} docked={layers} />
+      {/**
+       * Docked, it stays up *through* a text edit and keeps working — the whole
+       * point of a panel that lives at the edge of the screen rather than on top
+       * of the thing being edited. The floating bar cannot: it anchors itself to
+       * the selection, so during an edit it would sit on the words, which is why
+       * the type toolbar exists as a separate, movable thing at all.
+       */}
+      {selected && !moving && (layers || (!editing && !comparing)) && (
+        <ElementBar
+          node={selected}
+          docked={layers}
+          editing={editing === selected.el}
+          paintRequest={snapshot.paintRequest}
+        />
       )}
+
+      {/* Nothing selected, but the panel stays: on the canvas the right-hand
+          column is furniture, and what it holds with an empty selection is the
+          canvas's own properties. */}
+      {layers && !selected && !editing && <CanvasPanel />}
+
+      {/* The band, above the page but below the panels: one dragged under a
+          docked panel should disappear beneath it, not over it. */}
+      {band && <Marquee band={band} />}
+
+      {/* The artboard's name, only while there is an artboard to name. Before
+          the panels, so that when the frame is panned in behind one the panel
+          paints over the label rather than the other way about. */}
+      {layers && <FrameLabel />}
 
       {/* The page as layers, on the left. Independent of the selection: it is
           how you *find* something to select. */}
@@ -135,7 +173,10 @@ export function App() {
       {editing && selected?.el === editing && (
         <>
           {!preview && <EditHighlight el={editing} metrics={selected.metrics} />}
-          <TextToolbar el={editing} metrics={selected.metrics} />
+          {/* One type control at a time. With the column up it holds the
+              typography itself, and a floating bar saying the same things over
+              the top of the page would be two places to change one font. */}
+          {!layers && <TextToolbar el={editing} metrics={selected.metrics} />}
         </>
       )}
       <StatusBar snapshot={snapshot} />

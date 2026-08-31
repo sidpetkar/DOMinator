@@ -1,4 +1,5 @@
 import { useEffect, type CSSProperties, type RefObject } from 'react'
+import { HOST_ID } from '@/shared/constants'
 import type { Rect } from '../core/geometry'
 
 /** Rects are already in viewport space and our host is fixed — no conversion. */
@@ -27,6 +28,23 @@ export function zoomStable(zoom: number, origin: string, extraTransform = ''): C
     transform: `${extraTransform} scale(${scale})`.trim(),
     transformOrigin: origin,
   }
+}
+
+/**
+ * Our own root inside the shadow tree — where a popover goes to escape the panel
+ * that opened it.
+ *
+ * Docked, the element bar is an `overflow: hidden` box around an
+ * `overflow-y: auto` pane, which is precisely the arrangement a popover cannot
+ * survive: anything hanging off a control in that column is sliced at the
+ * column's edge. No `overflow` on the popover can help, because the clipping
+ * ancestor is the thing that has to scroll. Rendering somewhere else entirely is
+ * the fix, so popovers portal here and position themselves against the control
+ * they belong to.
+ */
+export const overlayRoot = (): HTMLElement | null => {
+  const shadow = document.getElementById(HOST_ID)?.shadowRoot
+  return (shadow?.firstElementChild as HTMLElement | null) ?? null
 }
 
 /** Put this on a popover root so presses inside it are never "outside". */

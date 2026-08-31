@@ -1,6 +1,7 @@
 import { EDITED_ATTR } from '@/shared/constants'
 import { describe } from './geometry'
 import * as history from './history'
+import { undress } from './frames'
 import { canContainChildren } from './reorder'
 import { deserialize, publish, serialize, shared } from './transfer'
 
@@ -23,7 +24,34 @@ export { watchShared } from './transfer'
  * it" — and a same-tab copy/paste never pays the serialisation's cost or its
  * small loss of fidelity.
  */
-let stored: { nodes: HTMLElement[]; label: string; at: number } | null = null
+let stored: {
+  nodes: HTMLElement[]
+  label: string
+  at: number
+  /**
+   * The same copy with its cascade resolved, kept even for a same-tab paste.
+   *
+   * The local clone is lossless *markup*, which is all a paste back into the
+   * page needs — the stylesheets that dressed it are still there. It is not
+   * enough for a paste onto the canvas: the copy lands as a child of `body`, so
+   * every rule that styled it through its context (`.card p`, `.row > .card`)
+   * stops matching and the text arrives black, or the block arrives empty. This
+   * is the version that carries its own appearance, and it is already being
+   * computed for the cross-tab shelf, so keeping it costs nothing.
+   */
+  html: string | null
+  /**
+   * The container the copy was taken out of.
+   *
+   * A clone is only lossless where the stylesheets that dressed it still apply,
+   * and that is a fact about *where it lands*, not about the copy. Pasted back
+   * among its old siblings it is perfect; pasted into a different section, every
+   * rule that reached it through its context — `.card p`, `.pricing .title` —
+   * stops matching and the text arrives black. Keeping the old home is what lets
+   * the paste tell those two cases apart (see `takeFor`).
+   */
+  home: HTMLElement | null
+} | null = null
 
 /** Whichever clipboard holds the most recent copy. */
 const freshest = (): 'local' | 'shared' | null => {
@@ -79,9 +107,16 @@ export function copy(elements: HTMLElement[]): { label: string; shareError?: str
 
   const label = list.length === 1 ? describe(list[0]!) : `${list.length} elements`
   const at = Date.now()
-  stored = { nodes: list.map((el) => el.cloneNode(true) as HTMLElement), label, at }
+  const clones = list.map((el) => el.cloneNode(true) as HTMLElement)
 
   const packed = serialize(list)
+  stored = {
+    nodes: clones,
+    label,
+    at,
+    html: packed.ok ? packed.html : null,
+    home: list[0]?.parentElement ?? null,
+  }
   if (!packed.ok) return { label, shareError: packed.reason }
   void publish({ at, label, count: list.length, origin: location.host, html: packed.html })
   return { label }
@@ -147,17 +182,82 @@ export const isPasteContainer = (el: HTMLElement): boolean =>
  * you want after selecting a heading or a button. Judging that from the target
  * rather than asking keeps it to a single keystroke.
  */
-export function paste(target: HTMLElement): PasteResult | null {
+/**
+ * Fresh copies of whatever is on the clipboard, inserted nowhere and recorded
+ * nowhere.
+ *
+ * Split out of `paste` for the canvas, which needs the nodes before it knows
+ * where they are going: they have to be stood up somewhere in the document to be
+ * measured and to have their cascade resolved, and that staging must not become
+ * an undo step of its own — one Ctrl+V should be one Ctrl+Z.
+ */
+export function take(): HTMLElement[] {
   const which = freshest()
-  if (!which) return null
-
+  if (!which) return []
   /**
    * The local clone is cloned again so one copy pastes repeatedly; the shared
    * form is parsed fresh each time, which does the same thing for free.
    */
   const sources: Element[] =
     which === 'local' ? (stored?.nodes ?? []) : deserialize(shared()?.html ?? '')
-  if (!sources.length) return null
+  const copies: HTMLElement[] = []
+  for (const source of sources) {
+    const node = source.cloneNode(true) as HTMLElement
+    sanitise(node)
+    copies.push(node)
+  }
+  return copies
+}
+
+/**
+ * The same copy, dressed — for a paste that is leaving its old context behind.
+ *
+ * Used by the canvas paste, which stands the copy on the surface rather than
+ * back in the page. Falls through to the ordinary clone whenever there is no
+ * resolved form to be had (a selection too large to serialise), which is worse
+ * than nothing only in the way it always was.
+ */
+export function takeStyled(): HTMLElement[] {
+  const which = freshest()
+  const html = which === 'local' ? stored?.html : shared()?.html
+  if (!html) return take()
+  const copies = deserialize(html)
+    .filter((node): node is HTMLElement => node instanceof HTMLElement)
+    .map((node) => node.cloneNode(true) as HTMLElement)
+  for (const node of copies) sanitise(node)
+  return copies.length ? copies : take()
+}
+
+/**
+ * The copies to use for *this* destination.
+ *
+ * Home is the lossless clone: back among the siblings it came from, the page's
+ * own rules still reach it and nothing has to be baked in. Anywhere else is the
+ * resolved form, because the context that dressed it is gone.
+ *
+ * This is the fix for a paste that arrived with black text: the plain clone was
+ * used everywhere, so copying a styled paragraph out of one section and pasting
+ * it into another produced markup no rule matched any more. The cost of always
+ * using the resolved form instead would be a same-place paste that quietly
+ * became a wall of inline styles — so the destination decides.
+ */
+function takeFor(target: HTMLElement): HTMLElement[] {
+  const home = stored?.home
+  const landing = isPasteContainer(target) ? target : target.parentElement
+  return home && landing === home ? take() : takeStyled()
+}
+
+export function paste(target: HTMLElement): PasteResult | null {
+  const nodes = takeFor(target)
+  if (!nodes.length) return null
+  /**
+   * Anything copied off the canvas arrives still dressed as a canvas object —
+   * absolutely positioned, at a fixed size, pinned to coordinates that mean
+   * nothing here. Pasting it into a container is a request to make it part of
+   * that container, so the dressing comes off and it takes its place in the
+   * stack like any other child.
+   */
+  for (const node of nodes) undress(node)
 
   const into = isPasteContainer(target)
   const added: HTMLElement[] = []
@@ -165,9 +265,7 @@ export function paste(target: HTMLElement): PasteResult | null {
   // A multi-copy pastes in the order it was taken, each after the last, so the
   // group keeps its original sequence rather than arriving reversed.
   let anchor: HTMLElement | null = null
-  for (const source of sources) {
-    const node = source.cloneNode(true) as HTMLElement
-    sanitise(node)
+  for (const node of nodes) {
     if (anchor) anchor.after(node)
     else if (into) target.append(node)
     else target.after(node)

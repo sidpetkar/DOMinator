@@ -9,6 +9,15 @@ import { clearStyle, px, setStyle } from './styles'
 
 export interface ShadowInfo {
   on: boolean
+  /**
+   * Drawn inside the box rather than cast by it — CSS's `inset` keyword.
+   *
+   * The same control Figma calls drop versus inner shadow, and one of the few
+   * places where its vocabulary and the stylesheet's line up exactly. It is a
+   * keyword on the same declaration, so nothing else here has to change shape to
+   * carry it.
+   */
+  inset: boolean
   x: number
   y: number
   blur: number
@@ -22,6 +31,7 @@ export interface ShadowInfo {
 /** What "add a shadow" starts from: the soft, low drop everything defaults to. */
 export const DEFAULT_SHADOW: ShadowInfo = {
   on: true,
+  inset: false,
   x: 0,
   y: 4,
   blur: 8,
@@ -47,12 +57,14 @@ export function readShadow(el: HTMLElement): ShadowInfo {
   if (!value || value === 'none') return { ...DEFAULT_SHADOW, on: false }
 
   const first = splitFirst(value)
+  const inset = /\binset\b/.test(first)
   const colorText = /^(rgba?\([^)]*\)|#[0-9a-f]{3,8})/i.exec(first.trim())?.[1] ?? ''
   const parsed = colorText ? parseColor(colorText) : null
   const lengths = [...first.matchAll(/(-?[\d.]+)px/g)].map((match) => Number(match[1]))
 
   return {
     on: true,
+    inset,
     x: lengths[0] ?? 0,
     y: lengths[1] ?? 0,
     blur: lengths[2] ?? 0,
@@ -87,13 +99,50 @@ export function setShadow(el: HTMLElement, shadow: ShadowInfo): void {
     setStyle(el, 'box-shadow', 'none')
     return
   }
-  const { x, y, blur, spread, color, opacity } = shadow
+  const { x, y, blur, spread, color, opacity, inset } = shadow
   setStyle(
     el,
     'box-shadow',
-    `${px(x)} ${px(y)} ${px(Math.max(0, blur))} ${px(spread)} ${rgba(color, opacity)}`,
+    `${inset ? 'inset ' : ''}${px(x)} ${px(y)} ${px(Math.max(0, blur))} ${px(spread)} ${rgba(color, opacity)}`,
   )
 }
+
+/**
+ * The opacity a hidden shadow comes back at.
+ *
+ * Hiding is written as a shadow at zero opacity rather than as `none`, for the
+ * reason the fill is written as `rgba(…, 0)`: the six numbers that describe it
+ * have to survive being switched off, and `none` keeps none of them. It also
+ * keeps hiding and removing distinguishable, which they have to be — one puts a
+ * `+` back on the heading and the other does not.
+ *
+ * A WeakMap for the one thing the declaration cannot hold: how strong the shadow
+ * was before it went to zero.
+ */
+const heldOpacity = new WeakMap<HTMLElement, number>()
+
+/** On and actually visible — a shadow at zero opacity is present and invisible. */
+export const shadowVisible = (shadow: ShadowInfo): boolean => shadow.on && shadow.opacity > 0
+
+export function toggleShadow(el: HTMLElement, shadow: ShadowInfo): void {
+  if (shadowVisible(shadow)) {
+    heldOpacity.set(el, shadow.opacity)
+    setShadow(el, { ...shadow, opacity: 0 })
+    return
+  }
+  setShadow(el, { ...shadow, opacity: shadow.opacity || heldOpacity.get(el) || DEFAULT_SHADOW.opacity })
+}
+
+/** The opacity to show while it is hidden: what it will be, not the 0 it is. */
+export const shadowOpacity = (el: HTMLElement, shadow: ShadowInfo): number =>
+  shadow.opacity > 0 ? shadow.opacity : (heldOpacity.get(el) ?? DEFAULT_SHADOW.opacity)
+
+/**
+ * No shadow at all — written as `none` rather than un-set, so an element the
+ * page already gives a shadow actually loses it. `clearShadow` is the other
+ * thing, and it is what the picker's reset offers.
+ */
+export const removeShadow = (el: HTMLElement): void => setStyle(el, 'box-shadow', 'none')
 
 /** Hands the element back whatever the page had to say about its shadow. */
 export const clearShadow = (el: HTMLElement): void => clearStyle(el, 'box-shadow')

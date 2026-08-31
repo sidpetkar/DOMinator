@@ -14,8 +14,14 @@ import clipboard from 'bootstrap-icons/icons/clipboard.svg?raw'
 import distributeHorizontal from 'bootstrap-icons/icons/distribute-horizontal.svg?raw'
 import distributeVertical from 'bootstrap-icons/icons/distribute-vertical.svg?raw'
 import download from 'bootstrap-icons/icons/download.svg?raw'
+import eye from 'bootstrap-icons/icons/eye.svg?raw'
+import eyeSlash from 'bootstrap-icons/icons/eye-slash.svg?raw'
 import eyedropper from 'bootstrap-icons/icons/eyedropper.svg?raw'
+import dashLg from 'bootstrap-icons/icons/dash-lg.svg?raw'
+import chevronDown from 'bootstrap-icons/icons/chevron-down.svg?raw'
+import grid from 'bootstrap-icons/icons/grid-3x3-gap.svg?raw'
 import gripVertical from 'bootstrap-icons/icons/grip-vertical.svg?raw'
+import plusLg from 'bootstrap-icons/icons/plus-lg.svg?raw'
 import imageAlt from 'bootstrap-icons/icons/image-alt.svg?raw'
 import infoCircle from 'bootstrap-icons/icons/info-circle.svg?raw'
 import justify from 'bootstrap-icons/icons/justify.svg?raw'
@@ -23,11 +29,19 @@ import link45deg from 'bootstrap-icons/icons/link-45deg.svg?raw'
 import listOl from 'bootstrap-icons/icons/list-ol.svg?raw'
 import paintBucket from 'bootstrap-icons/icons/paint-bucket.svg?raw'
 import search from 'bootstrap-icons/icons/search.svg?raw'
+import stars from 'bootstrap-icons/icons/stars.svg?raw'
+import sliders from 'bootstrap-icons/icons/sliders.svg?raw'
 import tag from 'bootstrap-icons/icons/tag.svg?raw'
 import textCenter from 'bootstrap-icons/icons/text-center.svg?raw'
 import textLeft from 'bootstrap-icons/icons/text-left.svg?raw'
 import textRight from 'bootstrap-icons/icons/text-right.svg?raw'
 import threeDots from 'bootstrap-icons/icons/three-dots.svg?raw'
+import shapes from 'bootstrap-icons/icons/pentagon.svg?raw'
+import typeGlyph from 'bootstrap-icons/icons/fonts.svg?raw'
+import typeBold from 'bootstrap-icons/icons/type-bold.svg?raw'
+import typeItalic from 'bootstrap-icons/icons/type-italic.svg?raw'
+import typeStrikethrough from 'bootstrap-icons/icons/type-strikethrough.svg?raw'
+import typeUnderline from 'bootstrap-icons/icons/type-underline.svg?raw'
 import universalAccess from 'bootstrap-icons/icons/universal-access.svg?raw'
 import type { ReactNode } from 'react'
 import type { AlignPos, Axis, Distribution } from '../core/layout'
@@ -104,6 +118,66 @@ export const ResetIcon = glyph(arrowCounterclockwise, 12)
 export const BucketIcon = glyph(paintBucket, 12)
 export const BorderPaintIcon = glyph(borderOuter, 12)
 
+/**
+ * The paint rows' own three marks: add one, hide one, take one away.
+ *
+ * A shown eye and a struck-through one rather than one eye that changes colour.
+ * "Off" has to be legible in the mark itself — a control whose only off state is
+ * a paler version of its on state is one you have to remember the meaning of,
+ * and the row it sits in is already dimmed for the same reason.
+ */
+export const PlusIcon = glyph(plusLg, 11)
+export const MinusIcon = glyph(dashLg, 11)
+export const EyeIcon = glyph(eye, 12)
+export const EyeOffIcon = glyph(eyeSlash, 12)
+/** The small chevron that says "there is a menu behind this". */
+export const CaretIcon = () => (
+  <Mark size={11}>
+    <path
+      d="M4.5 6.5 8 10l3.5-3.5"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    />
+  </Mark>
+)
+
+// — the layer tree ———————————————————————————————————————————————
+
+/**
+ * The twisty, as a real chevron rather than the `▶` this used to be.
+ *
+ * A text triangle is whatever weight the system font decides, which next to a
+ * row of hairline SVG marks is a black wedge; it also sits on the text baseline
+ * rather than in the middle of its box, so it needed a nudge that went stale at
+ * every zoom. It turns rather than swapping glyph, so opening a row is a motion.
+ */
+export const TwistyIcon = glyph(chevronDown, 10)
+
+/** What a row *is*: a stack running one way, a grid, a box, or words. */
+export const GridIcon = glyph(grid, 11)
+export const TextIcon = glyph(typeGlyph, 11)
+
+/**
+ * Two blocks and the air between them, which is the whole of what gap means.
+ *
+ * Drawn as solids rather than as two rules with a dash between: the outline
+ * version came out reading as the letter H, which is unfortunate in a panel
+ * whose next control along is a height field literally labelled H.
+ */
+export const GapIcon = () => (
+  <Mark>
+    <g fill="currentColor">
+      <rect x="3.4" y="3.6" width="3.2" height="8.8" rx="1" />
+      <rect x="9.4" y="3.6" width="3.2" height="8.8" rx="1" />
+    </g>
+  </Mark>
+)
+
+/** "There is more to this than the one line you can see" — the settings door. */
+export const SlidersIcon = glyph(sliders, 12)
+
 // — the element bar ——————————————————————————————————————————————
 
 /**
@@ -115,6 +189,19 @@ export const BorderIcon = glyph(borderOuter, 12)
 /** The same square with its edge described rather than drawn: border off. */
 export const NoBorderIcon = glyph(borderStyle, 12)
 export const UngroupIcon = glyph(boundingBoxCircles, 12)
+
+/**
+ * The four type marks, at 13 rather than 12: they are letterforms rather than
+ * diagrams, and a glyph of a letter set one pixel smaller than the icons around
+ * it reads as a mistake instead of as a smaller icon.
+ */
+/** The one mark that stands for "draw something": the tools fold out behind it. */
+export const ShapesIcon = glyph(shapes, 13)
+
+export const BoldIcon = glyph(typeBold, 13)
+export const ItalicIcon = glyph(typeItalic, 13)
+export const UnderlineIcon = glyph(typeUnderline, 13)
+export const StrikeIcon = glyph(typeStrikethrough, 13)
 export const LinkIcon = glyph(link45deg, 13)
 
 // — the status bar ————————————————————————————————————————————————
@@ -148,6 +235,14 @@ export const ImageIcon = glyph(imageIcon, 12)
 export const SearchIcon = glyph(search, 12)
 export const FrameIcon = glyph(boundingBox, 13)
 export const DownloadIcon = glyph(download, 15)
+/** The save button's mark, at the bar's own size. */
+export const SaveIcon = glyph(download, 13)
+/**
+ * The hand-off to an agent. Stars rather than a clipboard: what leaves is not a
+ * copy of anything on screen, it is a written brief, and the clipboard mark is
+ * already spoken for by the paste pill two controls along.
+ */
+export const HandoffIcon = glyph(stars, 13)
 export const TickIcon = glyph(check, 16)
 export const DotsIcon = glyph(threeDots, 15)
 

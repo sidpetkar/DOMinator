@@ -14,8 +14,26 @@ export interface LayoutInfo {
   items: HTMLElement[]
 }
 
+/**
+ * The children that are actually laid out by this container.
+ *
+ * Absolutely positioned children are excluded, and that is not a nicety: they
+ * are out of flow, so there is no seam between them and their siblings for a
+ * gap to be. On the canvas every lifted variation is an absolute child of
+ * `body`, so selecting the page drew pink gap bands stretching from the
+ * artboard out across the surface to each object — measuring a distance that
+ * exists in no layout and that nothing could edit. The same is true of any
+ * page's own absolutely positioned overlay.
+ *
+ * `fixed` goes with it for the same reason, and `display: none` because a box
+ * with no box has no spacing either.
+ */
 export function childItems(el: HTMLElement): HTMLElement[] {
-  return [...el.children].filter(isTargetable)
+  return [...el.children].filter((child): child is HTMLElement => {
+    if (!isTargetable(child)) return false
+    const { position, display } = window.getComputedStyle(child)
+    return position !== 'absolute' && position !== 'fixed' && display !== 'none'
+  })
 }
 
 /**

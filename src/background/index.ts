@@ -100,7 +100,47 @@ async function captureViewport(windowId: number | undefined): Promise<WorkerResp
   return { ok: false, error: 'capture failed' }
 }
 
+/**
+ * One asset, as a data: URI (or as text, for a stylesheet we need to read).
+ *
+ * Capped, because a saved canvas is a file someone is going to email: a single
+ * hero image at 8MB would make the whole thing unsendable, and the URL is kept
+ * in the markup regardless, so anything skipped still loads for a reader who is
+ * online. Better a 3MB file that is perfect offline for everything reasonable
+ * than a 40MB one that is perfect for everything.
+ */
+const MAX_ASSET_BYTES = 2_500_000
+
+async function fetchAsset(url: string, asText = false): Promise<WorkerResponse> {
+  try {
+    const response = await fetch(url, { credentials: 'omit' })
+    if (!response.ok) return { ok: false, error: `HTTP ${response.status}` }
+    if (asText) {
+      const text = await response.text()
+      return { ok: true, asset: text, bytes: text.length }
+    }
+    const blob = await response.blob()
+    if (blob.size > MAX_ASSET_BYTES) return { ok: false, error: 'too large' }
+    const buffer = new Uint8Array(await blob.arrayBuffer())
+    // Chunked, because `String.fromCharCode(...bytes)` on a megabyte of image
+    // blows the argument limit and throws.
+    let binary = ''
+    const CHUNK = 0x8000
+    for (let i = 0; i < buffer.length; i += CHUNK) {
+      binary += String.fromCharCode(...buffer.subarray(i, i + CHUNK))
+    }
+    const type = blob.type || 'application/octet-stream'
+    return { ok: true, asset: `data:${type};base64,${btoa(binary)}`, bytes: blob.size }
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : String(error) }
+  }
+}
+
 chrome.runtime.onMessage.addListener((message: WorkerRequest, sender, respond) => {
+  if (message?.type === 'asset:fetch') {
+    void fetchAsset(message.url, message.asText).then(respond)
+    return true
+  }
   if (message?.type === 'zoom:get') {
     const tabId = sender.tab?.id
     if (tabId === undefined) {

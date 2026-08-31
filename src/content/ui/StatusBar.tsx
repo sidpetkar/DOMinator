@@ -5,6 +5,7 @@ import * as canvas from '../core/canvas'
 import * as clipboard from '../core/clipboard'
 import { controller } from '../core/controller'
 import { editedCount } from '../core/styles'
+import type { ObjectKind } from '../core/objects'
 import type { EditorSnapshot } from '../core/store'
 import { zoom } from '../core/zoom'
 import {
@@ -21,6 +22,9 @@ import {
   TabOrderIcon,
   UndoIcon,
   XrayIcon,
+  HandoffIcon,
+  SaveIcon,
+  ShapesIcon,
 } from './icons'
 import { ExpandGroup } from './ExpandGroup'
 import { PanelGrip, usePanelDrag } from './PanelGrip'
@@ -90,6 +94,18 @@ export function StatusBar({ snapshot }: { snapshot: EditorSnapshot }) {
         width: 'fit-content',
         maxWidth: 'calc(100vw - 24px)',
         borderRadius: wrapped ? 16 : 'var(--radius-pill)',
+        /**
+         * Switching to the canvas adds four controls to this bar — the zoom, the
+         * drawing tools, the save button — and they used to appear all at once,
+         * which reads as the bar being replaced rather than as it growing. The
+         * width is animated so the change is one movement you can follow; the
+         * contents fade in behind it.
+         *
+         * `width` is animatable here only because the bar is `fit-content` and
+         * absolutely placed, so nothing else on screen reflows while it runs.
+         */
+        transition:
+          'width 260ms cubic-bezier(0.2, 0.8, 0.2, 1), border-radius 200ms ease',
         ...zoomStable(zoom(), grip.pinned ? 'top left' : 'bottom center'),
       }}
     >
@@ -151,6 +167,21 @@ export function StatusBar({ snapshot }: { snapshot: EditorSnapshot }) {
             </span>
           )}
         </Pill>
+      )}
+
+      {/**
+       * Text and shapes, on the canvas only.
+       *
+       * There is nowhere to put a free-floating rectangle on an ordinary page —
+       * it would have to go *in* something, and then it is not a shape you drew,
+       * it is an element you added to a stack. The surface is what makes them
+       * possible, so they appear with it.
+       */}
+      {snapshot.layers && (
+        <>
+          <ShapeGroup snapshot={snapshot} />
+          <span className="dm-divider" />
+        </>
       )}
 
       {/* Only on the canvas, because off it this is the browser's zoom and not
@@ -230,6 +261,49 @@ export function StatusBar({ snapshot }: { snapshot: EditorSnapshot }) {
         </Pill>
       )}
 
+      {/**
+       * The board, as a file.
+       *
+       * A download rather than a save, and the distinction is the point: this
+       * one asks nothing and remembers nothing — a copy lands in Downloads and
+       * you send it to somebody. Ctrl+S is the other half, and it keeps the file
+       * it wrote to so every save after the first is silent.
+       *
+       * Only on the canvas. Off it there is no board to save: the page is
+       * somebody else's and the edits are a session, not a document.
+       */}
+      {snapshot.layers && (
+        <>
+          <Pill
+            label="Save"
+            title="Download this canvas as a file you can share, reopen and keep editing — Ctrl/Cmd+S saves in place"
+            onClick={() => controller.downloadCanvas()}
+          >
+            <SaveIcon />
+          </Pill>
+          <span className="dm-divider" />
+        </>
+      )}
+
+      {/**
+       * The session, as a brief.
+       *
+       * Beside Reset because they are the two ends of the same question — what
+       * did I change, and do I want to keep it. Shown only once there is
+       * something to hand over, for the reason Redo is: a permanently dead
+       * button occupies the bar for a state that is empty most of the time.
+       */}
+      {edits > 0 && (
+        <Pill
+          label="Copy changes"
+          title="Copy every change you have made to the page as a prompt for a coding agent — variations on the canvas are not included"
+          onClick={() => void controller.copyChanges()}
+        >
+          <HandoffIcon />
+          <span>Copy changes</span>
+        </Pill>
+      )}
+
       <Pill label="Reset" title="Drop every change" onClick={() => controller.reset()}>
         Reset{edits ? ` (${edits})` : ''}
       </Pill>
@@ -300,6 +374,82 @@ function ShotGroup({ snapshot }: { snapshot: EditorSnapshot }) {
  * can't do without a hardcoded guess that goes stale the moment a fifth tool is
  * added — and it stays a single CSS transition, so no JS runs per frame.
  */
+/**
+ * The drawing tools, behind one icon.
+ *
+ * Folded the same way the accessibility checks are, and for the same reason: on
+ * the canvas the bar already carries the zoom, the panels switch, the camera and
+ * the lenses, and four more pills for tools you use in bursts pushed the whole
+ * thing wider than some windows. One icon says "you can draw here"; opening it
+ * is a click you make when that is what you are doing.
+ *
+ * These are tools, not buttons — the pressed one stays lit until you have drawn
+ * with it, which is the only thing telling you the next press on the canvas will
+ * make a rectangle instead of selecting one.
+ */
+function ShapeGroup({ snapshot }: { snapshot: EditorSnapshot }) {
+  const open = snapshot.shapesOpen
+  const tool = snapshot.tool
+  return (
+    <>
+      <Pill
+        label="Draw"
+        title="Text and shapes — draw them straight onto the canvas"
+        active={open || Boolean(tool)}
+        onClick={() => controller.toggleShapes()}
+      >
+        <ShapesIcon />
+      </Pill>
+
+      <ExpandGroup open={open}>
+        {TOOLS.map(({ kind, label, title, glyph }) => (
+          <Pill
+            key={kind}
+            label={label}
+            title={title}
+            active={tool === kind}
+            onClick={() => controller.arm(kind)}
+          >
+            {glyph}
+          </Pill>
+        ))}
+      </ExpandGroup>
+    </>
+  )
+}
+
+const TOOLS: {
+  kind: ObjectKind
+  label: string
+  title: string
+  glyph: ReactNode
+}[] = [
+  {
+    kind: 'text',
+    label: 'Text',
+    title: 'Text — drag out a box on the canvas, or click for one at a default size',
+    glyph: <span style={{ fontWeight: 700 }}>T</span>,
+  },
+  {
+    kind: 'rect',
+    label: 'Rectangle',
+    title: 'Rectangle — drag it out on the canvas',
+    glyph: <span aria-hidden>▢</span>,
+  },
+  {
+    kind: 'ellipse',
+    label: 'Ellipse',
+    title: 'Ellipse — drag it out on the canvas',
+    glyph: <span aria-hidden>◯</span>,
+  },
+  {
+    kind: 'line',
+    label: 'Line',
+    title: 'Line — drag out its length on the canvas',
+    glyph: <span aria-hidden>—</span>,
+  },
+]
+
 function AdaGroup({ snapshot }: { snapshot: EditorSnapshot }) {
   const open = snapshot.adaOpen
   const { lens } = snapshot

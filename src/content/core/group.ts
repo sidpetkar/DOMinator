@@ -152,6 +152,9 @@ function inferGap(
   return Math.max(0, Math.round(median))
 }
 
+/** What a stack is spaced by when the elements it was made from had no seam. */
+const DEFAULT_GAP = 12
+
 /** Within this many pixels, two edges were meant to line up. */
 const ALIGN_TOLERANCE = 2
 
@@ -321,7 +324,17 @@ export function wrap(plan: Extract<GroupPlan, { ok: true }>): HTMLElement {
   const rects = new Map(items.map((el, index) => [el, metrics[index]!.rect]))
 
   const axis = inferAxis([...rects.values()])
-  const gap = inferGap(parent, items, rects, axis)
+  /**
+   * The rhythm they already had, or a starting one if they had none.
+   *
+   * Elements sitting flush against each other infer a gap of zero, and a brand
+   * new auto-layout that looks exactly like the pile it was made from does not
+   * read as having done anything — the first thing anyone does next is reach for
+   * the gap field. Twelve is a spacing you would have typed anyway, and it is
+   * only used where the answer would otherwise be nothing.
+   */
+  const measured = inferGap(parent, items, rects, axis)
+  const gap = measured > 0 ? measured : DEFAULT_GAP
   const parentAxis = axisOf(parent)
   // Only a solid run has a span the wrapper can be held to; pulling scattered
   // siblings together necessarily changes the geometry (see reconcile).

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import type { FontMeta } from '@/shared/messages'
 import { loadCatalogue, loadPreview, previewFamily } from '../core/fonts'
 import { cx, useFadingScroll } from './util'
-import { SearchIcon } from './icons'
+import { CaretIcon, SearchIcon } from './icons'
 
 /** Survives close/reopen — and remount — so a search isn't retyped. */
 let lastQuery = ''
@@ -101,27 +101,46 @@ export function FontPicker({
   useFadingScroll(listRef, open)
 
   return (
-    <div className="relative">
+    <div className="relative flex min-w-0">
+      {/* As wide as the room it is given. A family name is the longest string in
+          this panel and the fixed 136px it used to have meant most of them
+          arrived as an ellipsis before the second word. */}
       <button
         type="button"
         onPointerDown={(event) => event.stopPropagation()}
         onClick={() => setOpen((prev) => !prev)}
-        className="flex h-[26px] w-[136px] items-center justify-between rounded-[6px] border border-line bg-paper px-1.5 text-[11px] text-ink"
+        className={cx(
+          'dm-select flex h-[24px] min-w-0 flex-1 items-center gap-1 rounded-[6px] border-0 px-1.5 text-[11px] text-ink',
+          open ? 'bg-ink/[0.10]' : 'bg-ink/[0.06] hover:bg-ink/[0.09]',
+        )}
         style={value && loaded.has(value) ? { fontFamily: `"${value}", ui-sans-serif` } : undefined}
         title={value || 'Font family'}
       >
-        <span className="truncate">{value || 'Font'}</span>
-        <span className="text-ink-soft">▾</span>
+        <span className="min-w-0 flex-1 truncate text-left">{value || 'Font'}</span>
+        <span className="shrink-0 text-ink-soft">
+          <CaretIcon />
+        </span>
       </button>
 
       {open && (
         <div
           className="dm-panel absolute left-0 flex w-[248px] flex-col overflow-hidden"
-          style={dropUp ? { bottom: 30 } : { top: 30 }}
+          style={dropUp ? { bottom: 28 } : { top: 28 }}
           onPointerDown={(event) => event.stopPropagation()}
         >
-          <div className="flex items-center gap-1 border-b border-line px-2">
-            <SearchIcon />
+          {/**
+           * The search field *is* the row, rather than an input sitting inside
+           * one with its own border.
+           *
+           * It had both: a bordered panel header and a field that drew a second
+           * box inside it, which on focus grew a third — a blue ring around a
+           * rounded rectangle inside a rounded rectangle. Making the whole row
+           * the control leaves one shape.
+           */}
+          <div className="flex items-center gap-1.5 border-b border-line px-2.5 py-1.5">
+            <span className="flex shrink-0 items-center text-ink-soft">
+              <SearchIcon />
+            </span>
             <input
               ref={searchRef}
               aria-label="Search fonts"
@@ -129,12 +148,10 @@ export function FontPicker({
               placeholder={fonts.length ? `Search ${fonts.length} fonts` : 'Loading library…'}
               onChange={(event) => setQuery(event.target.value)}
               onKeyDown={(event) => {
-                if (event.key === 'Escape') {
-                  event.stopPropagation()
-                  setOpen(false)
-                }
+                event.stopPropagation()
+                if (event.key === 'Escape') setOpen(false)
               }}
-              className="dm-field min-w-0 flex-1 rounded-[6px] border border-transparent bg-transparent px-1 py-1.5 text-[11px] text-ink"
+              className="dm-field dm-bare min-w-0 flex-1 border-0 bg-transparent p-0 text-[11px] text-ink outline-none placeholder:text-ink-soft"
             />
             {query && (
               <button
@@ -144,9 +161,9 @@ export function FontPicker({
                   setQuery('')
                   searchRef.current?.focus()
                 }}
-                className="grid h-[16px] w-[16px] place-items-center rounded-full border-0 bg-ink/8 text-[9px] leading-none text-ink-soft"
+                className="shrink-0 rounded-[4px] border-0 bg-transparent px-1 text-[11px] leading-none text-ink-soft hover:bg-ink/5"
               >
-                ✕
+                ×
               </button>
             )}
           </div>

@@ -1,5 +1,6 @@
 import type { ContrastAudit, IssueAudit, TabOrderAudit } from './audit'
-import { measure, sameRect, type Metrics } from './geometry'
+import { measure, sameRect, type Metrics, type Rect } from './geometry'
+import type { ObjectKind } from './objects'
 import type { Drop } from './reorder'
 import type { ShotState } from './screenshot'
 
@@ -32,10 +33,10 @@ function childSignature(el: HTMLElement): string {
 export type Interaction = 'idle' | 'resize' | 'spacing' | 'move'
 
 /** The floating panels, each of which can be picked up by its 6-dot grip. */
-export type PanelId = 'element' | 'status' | 'text' | 'group'
+export type PanelId = 'element' | 'status' | 'text' | 'group' | 'tree' | 'controls' | 'canvas'
 
 /** The element-bar groups that fold out into their parts. */
-export type BoxGroup = 'padding' | 'margin' | 'radius' | 'shadow'
+export type BoxGroup = 'padding' | 'margin' | 'radius' | 'shadow' | 'stroke'
 
 /** Which accessibility check is showing. Also the tag the overlay switches on. */
 export type LensKind = 'contrast' | 'tab' | 'aria' | 'alt'
@@ -63,17 +64,43 @@ export interface EditorSnapshot {
    * set: delete, copy, duplicate.
    */
   extras: Node[]
+  /**
+   * The other candidates at the hovered element's own level.
+   *
+   * Drawn as dotted outlines while one of their number is solidly outlined, so
+   * a hover answers two questions at once: what you would get, and what else is
+   * *there* to get. Without them the page is a picture with one box on it and
+   * you have to sweep the cursor around to discover the structure — which is
+   * precisely the hunting this is meant to end.
+   *
+   * Held as elements rather than as rects: the overlay repaints every frame, so
+   * measuring them at draw time keeps them correct through a scroll, a pan or a
+   * page that is still laying itself out, for nothing.
+   */
+  peers: HTMLElement[]
   /** Element currently in contenteditable mode (PRD §3.5). */
   editing: HTMLElement | null
   interaction: Interaction
   /** Live drop target while a move gesture is in flight. */
   drop: Drop | null
+  /**
+   * The rubber band, while one is being dragged across the canvas. In viewport
+   * coordinates, like every other rect the overlay draws.
+   */
+  band: Rect | null
   /** Page-skeleton lens (see xray.ts). */
   xray: boolean
   /** Whether the accessibility tools are revealed in the status bar. */
   adaOpen: boolean
   /** Whether the full-page button is revealed beside the camera. */
   shotOpen: boolean
+  /** Whether the text and shape tools are unfolded beside their own icon. */
+  shapesOpen: boolean
+  /**
+   * The armed drawing tool, if any. A tool is *armed*, not applied: the next
+   * press on the canvas is what makes the object, at the size it is dragged.
+   */
+  tool: ObjectKind | null
   /**
    * The docked layout: a layer tree down the left, the element's controls down
    * the right, the way a design tool arranges itself.
@@ -111,6 +138,17 @@ export interface EditorSnapshot {
    * Making them one field means they can't both be on.
    */
   lens: Lens | null
+  /**
+   * A request from outside the panel to open one of its colour pickers.
+   *
+   * The pickers are the panel's own local state, which is right — they are a
+   * detail of how a row behaves. But `i` is a keystroke on the canvas, and the
+   * canvas has no way to reach into a component's state, so the request passes
+   * through here. The nonce is what makes it a *request* rather than a state:
+   * without it, closing the picker by hand would leave the store still saying
+   * "open" and the next render would reopen it.
+   */
+  paintRequest: { kind: 'fill' | 'border'; nonce: number } | null
   /** Undo depth, mirrored here purely so the status bar re-renders. */
   undoDepth: number
   /** How much has been undone and is still waiting to be put back. */
@@ -147,16 +185,21 @@ const EMPTY: EditorSnapshot = {
   hovered: null,
   selected: null,
   extras: [],
+  peers: [],
   editing: null,
   interaction: 'idle',
   drop: null,
+  band: null,
   xray: false,
   adaOpen: false,
   shotOpen: false,
+  shapesOpen: false,
+  tool: null,
   layers: false,
   collapsed: {},
   expanded: {},
   lens: null,
+  paintRequest: null,
   undoDepth: 0,
   redoDepth: 0,
   shot: null,

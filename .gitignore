@@ -14,3 +14,6 @@ dist/
 # meaningless to anyone else. .claude/launch.json *is* shared — it is how the
 # preview harness starts.
 .claude/settings.local.json
+
+# Canvases written by the local harness (POST /__save)
+test/*.dom.html
